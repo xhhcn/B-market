@@ -1,16 +1,1997 @@
 ---
+import ServerCard from '../components/ServerCard.astro';
+import Header from '../components/Header.jsx';
+import Footer from '../components/Footer.jsx';
 
+// 获取API基础URL - Docker单容器模式
+function getApiBaseUrl() {
+  // 在Docker单容器环境中，API服务运行在localhost:3001
+  // 服务器端始终使用内部地址
+  return 'http://localhost:3001/api';
+}
+
+// 从API获取服务器数据
+let servers = [];
+
+try {
+  const apiBaseUrl = getApiBaseUrl();
+  const response = await fetch(`${apiBaseUrl}/servers`);
+  const result = await response.json();
+  
+  if (result.success) {
+    servers = result.data;
+  } else {
+    console.error('获取服务器数据失败:', result.message);
+    servers = []; // 确保使用空数组而不是备用数据
+  }
+} catch (error) {
+  console.error('API连接失败:', error);
+  servers = []; // 确保使用空数组而不是备用数据
+}
+
+// 计算统计数据
+const totalServers = servers.length;
+
+// 计算即将到期的服务器数量（30天内）
+const expiringSoon = servers.filter(server => {
+  // 永久服务器不会过期
+  if (server.renewalCycle === '永久') {
+    return false;
+  }
+  
+  // 检查是否有有效的到期日期
+  if (!server.expirationDate) {
+    return false;
+  }
+  
+  const expirationDate = new Date(server.expirationDate);
+  const today = new Date();
+  const thirtyDaysFromNow = new Date();
+  thirtyDaysFromNow.setDate(today.getDate() + 30);
+  
+  return expirationDate <= thirtyDaysFromNow && expirationDate >= today;
+}).length;
+
+// 计算可用服务器数量
+const availableServers = servers.filter(server => server.status === '出售').length;
+
+// 计算总剩余价值
+const totalRemainingValue = servers.reduce((total, server) => {
+  if (!server.remainingValue) {
+    return total;
+  }
+  
+  // 处理各种格式的剩余价值 (如: "100 CNY", "￥1,500.00", "0 CNY")
+  let valueStr = server.remainingValue.toString();
+  
+  // 移除货币符号和单位，只保留数字和小数点、逗号
+  valueStr = valueStr.replace(/[￥$€£¥]/g, '').replace(/[A-Z]{3}/g, '').replace(/,/g, '').trim();
+  
+  const value = parseFloat(valueStr);
+  return total + (isNaN(value) ? 0 : value);
+}, 0);
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta name="generator" content={Astro.generator} />
+	<title>B-Market - 服务器管理平台</title>
+	<meta name="description" content="简约的服务器信息管理平台，轻松管理您的云服务器资源。" />
+	<link rel="stylesheet" href="/flag-icons.min.css" />
+	
+	<!-- 全局API配置 - Docker单容器反向代理模式 -->
+	<script is:inline>
+		window.API_CONFIG = {
+			baseUrl: (() => {
+				// Docker单容器模式：客户端通过反向代理访问API
+				// 开发环境检测
+				if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+					// 开发环境直接访问API端口
+					return 'http://localhost:3001/api';
+				}
+				
+				// 生产环境（Docker）：使用反向代理
+				// 所有API请求都通过当前域名的/api路径
+				return '/api';
+			})()
+		};
+		console.log('🔗 客户端API配置:', window.API_CONFIG.baseUrl);
+	</script>
+	
+	<style>
+
+		body {
+			background: url('/background.svg') no-repeat center center fixed;
+			background-size: cover;
+			color: #1a1a1a;
+			min-height: 100vh;
+			padding-bottom: 45px; /* 为固定脚部留出空间 */
+		}
+
+		.container {
+			max-width: 1200px;
+			margin: 0 auto;
+			padding: 20px;
+		}
+
+		.content {
+			padding: 20px 0;
+		}
+
+		.cards-grid {
+			display: grid;
+			gap: 24px;
+			align-items: start;
+			opacity: 0;
+			transition: opacity 0.3s ease;
+			margin-bottom: 40px;
+		}
+		
+		.cards-grid.initialized {
+			opacity: 1;
+		}
+
+		/* 计算器弹窗样式 - 统一动画系统 */
+		.calculator-modal {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			position: fixed;
+			z-index: 1000;
+			left: 0;
+			top: 0;
+			width: 100%;
+			height: 100%;
+			background: rgba(0, 0, 0, 0);
+			backdrop-filter: blur(0px);
+			-webkit-backdrop-filter: blur(0px);
+			opacity: 0;
+			visibility: hidden;
+			transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+
+		.calculator-modal.show {
+			background: rgba(0, 0, 0, 0.5);
+			backdrop-filter: blur(10px);
+			-webkit-backdrop-filter: blur(10px);
+			opacity: 1;
+			visibility: visible;
+		}
+
+		.calculator-modal-content {
+			background: #ffffff;
+			border-radius: 16px;
+			padding: 32px;
+			width: 90%;
+			max-width: 600px;
+			max-height: 90vh;
+			overflow-y: auto;
+			backdrop-filter: blur(15px);
+			-webkit-backdrop-filter: blur(15px);
+			border: 1px solid rgba(255, 255, 255, 0.3);
+			box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+		}
+
+		/* 隐藏滚动条但保持滚动功能 */
+		.calculator-modal-content::-webkit-scrollbar {
+			display: none;
+		}
+
+		/* Firefox - 隐藏滚动条 */
+		.calculator-modal-content {
+			scrollbar-width: none;
+			-ms-overflow-style: none;
+		}
+
+
+
+		.calculator-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 32px;
+		}
+
+		.calculator-title {
+			font-size: 1.5rem;
+			font-weight: 700;
+			color: #1e293b;
+			margin: 0;
+		}
+
+		.calculator-close-btn {
+			background: #ffffff;
+			border: none;
+			font-size: 1.25rem;
+			cursor: pointer;
+			color: #ef4444;
+			padding: 8px;
+			width: 40px;
+			height: 40px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			border-radius: 10px;
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+		}
+
+		.calculator-close-btn:hover {
+			color: #dc2626;
+			background: #ffffff;
+		}
+
+		.calculator-form {
+			display: flex;
+			flex-direction: column;
+			gap: 24px;
+			width: 100%;
+		}
+
+		.form-row {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 20px;
+			align-items: stretch;
+			width: 100%;
+		}
+
+		.form-group {
+			display: flex;
+			flex-direction: column;
+			width: 100%;
+			min-width: 0;
+			height: auto;
+		}
+
+		.form-group.full-width {
+			grid-column: 1 / -1;
+		}
+
+		.form-label {
+			font-size: 0.875rem;
+			font-weight: 600;
+			color: #374151;
+			margin-bottom: 8px;
+			letter-spacing: 0.025em;
+		}
+
+		.form-input, .form-select {
+			padding: 14px 16px;
+			border: none;
+			border-radius: 12px;
+			font-size: 0.875rem;
+			font-weight: 500;
+			background: #ffffff;
+			color: #374151;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			border: 1px solid rgba(229, 231, 235, 0.3);
+			height: 50px;
+			min-height: 50px;
+			box-sizing: border-box;
+			width: 100%;
+		}
+
+		/* 只为非只读的输入框添加transition */
+		/* 隐藏所有select元素的默认箭头 */
+		select {
+			-webkit-appearance: none !important;
+			-moz-appearance: none !important;
+			appearance: none !important;
+			background-image: none !important;
+			background: transparent !important;
+		}
+		
+		/* 隐藏IE的默认箭头 */
+		select::-ms-expand {
+			display: none !important;
+		}
+		
+		/* 针对Webkit浏览器的特殊处理 */
+		select::-webkit-appearance {
+			-webkit-appearance: none !important;
+		}
+		
+		/* 针对Firefox的特殊处理 */
+		select::-moz-appearance {
+			-moz-appearance: none !important;
+		}
+		
+		/* 价格输入容器中的select特殊处理 */
+		.price-input-container select {
+			-webkit-appearance: none !important;
+			-moz-appearance: none !important;
+			appearance: none !important;
+			background-image: none !important;
+			background: transparent !important;
+			border: none !important;
+			outline: none !important;
+			cursor: pointer !important;
+		}
+		
+		.price-input-container select::-ms-expand {
+			display: none !important;
+		}
+		
+		.price-input-container select::-webkit-appearance {
+			-webkit-appearance: none !important;
+		}
+		
+		.price-input-container select::-moz-appearance {
+			-moz-appearance: none !important;
+		}
+
+		.form-input:not([readonly]), .form-select {
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+
+		.form-input:not([readonly]):focus, .form-select:focus {
+			border-color: rgba(59, 130, 246, 0.5);
+			box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+		}
+		
+		/* 自定义下拉框样式 */
+		.custom-select {
+			position: relative;
+			display: block;
+			width: 100%;
+		}
+		
+		.custom-select-trigger {
+			position: relative;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 14px 16px;
+			border: 1px solid rgba(229, 231, 235, 0.3);
+			border-radius: 12px;
+			font-size: 0.875rem;
+			font-weight: 500;
+			background: #ffffff;
+			color: #374151;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			height: 50px;
+			min-height: 50px;
+			box-sizing: border-box;
+			width: 100%;
+			cursor: pointer;
+			outline: none;
+		}
+		
+		.custom-select-trigger:hover {
+			border-color: rgba(59, 130, 246, 0.3);
+		}
+		
+		.custom-select-trigger:focus {
+			border-color: rgba(59, 130, 246, 0.5);
+			box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+		}
+
+		.custom-select.open .custom-select-trigger {
+			border-color: rgba(59, 130, 246, 0.5);
+			box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+		}
+		
+		.custom-select-arrow {
+			width: 16px;
+			height: 16px;
+			color: #6b7280;
+			transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+			flex-shrink: 0;
+		}
+		
+		.custom-select.open .custom-select-arrow {
+			transform: rotate(180deg);
+		}
+		
+		.custom-select-dropdown {
+			position: absolute;
+			top: 100%;
+			left: 0;
+			right: 0;
+			z-index: 1000;
+			background: #ffffff;
+			border: 1px solid rgba(229, 231, 235, 0.3);
+			border-radius: 8px;
+			box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			margin-top: 4px;
+			opacity: 0;
+			visibility: hidden;
+			transform: translateY(-4px);
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+		
+		.custom-select.open .custom-select-dropdown {
+			opacity: 1;
+			visibility: visible;
+			transform: translateY(0);
+		}
+		
+		.custom-select-option {
+			padding: 12px 16px;
+			font-size: 0.875rem;
+			color: #374151;
+			cursor: pointer;
+			transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+			border-bottom: 1px solid rgba(229, 231, 235, 0.2);
+		}
+		
+		.custom-select-option:last-child {
+			border-bottom: none;
+		}
+		
+		.custom-select-option:hover {
+			background: rgba(59, 130, 246, 0.05);
+			color: #1d4ed8;
+		}
+		
+		.custom-select-option.selected {
+			background: rgba(59, 130, 246, 0.1);
+			color: #1d4ed8;
+			font-weight: 600;
+		}
+		
+		.custom-select-option.selected:hover {
+			background: rgba(156, 163, 175, 0.7);
+		}
+		
+		/* 下拉框滚动条样式 */
+		.custom-select-dropdown {
+			max-height: 200px;
+			overflow-y: auto;
+		}
+		
+		.custom-select-dropdown::-webkit-scrollbar {
+			width: 6px;
+		}
+		
+		.custom-select-dropdown::-webkit-scrollbar-track {
+			background: rgba(243, 244, 246, 0.5);
+			border-radius: 3px;
+		}
+		
+		.custom-select-dropdown::-webkit-scrollbar-thumb {
+			background: rgba(156, 163, 175, 0.5);
+			border-radius: 3px;
+		}
+		
+		.custom-select-dropdown::-webkit-scrollbar-thumb:hover {
+			background: rgba(156, 163, 175, 0.7);
+		}
+
+		.form-input:focus, .form-select:focus {
+			outline: none;
+			background: #ffffff;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+			border-color: rgba(229, 231, 235, 0.3);
+		}
+
+		.form-select {
+			cursor: pointer;
+			background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+			background-position: right 14px center;
+			background-repeat: no-repeat;
+			background-size: 16px;
+			padding-right: 40px;
+			-webkit-appearance: none;
+			-moz-appearance: none;
+			appearance: none;
+			max-width: 100%;
+		}
+
+				.price-input-container {
+			position: relative;
+			display: flex;
+			align-items: stretch;
+			background: #ffffff;
+			border-radius: 12px;
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+			border: 1px solid rgba(229, 231, 235, 0.3);
+			min-height: 50px;
+			width: 100%;
+			box-sizing: border-box;
+			height: 50px;
+			overflow: visible;
+		}
+
+		.price-input-container:focus-within {
+			background: #ffffff;
+			box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+			border-color: rgba(59, 130, 246, 0.5);
+		}
+
+		.price-input-container input[type="number"] {
+			flex: 1;
+			border: none;
+			background: transparent;
+			padding: 0 90px 0 12px;
+			font-size: 0.875rem;
+			font-weight: 500;
+			color: #374151;
+			outline: none;
+			-webkit-appearance: none;
+			-moz-appearance: textfield;
+			height: 100%;
+			min-height: 22px;
+			align-self: stretch;
+			box-sizing: border-box;
+			width: 100%;
+		}
+
+		.price-input-container input::-webkit-outer-spin-button,
+		.price-input-container input::-webkit-inner-spin-button {
+			-webkit-appearance: none;
+			margin: 0;
+		}
+
+		.price-input-container select {
+			border: none;
+			background: transparent;
+			padding: 14px 24px 14px 8px;
+			font-size: 0.875rem;
+			font-weight: 500;
+			color: #374151;
+			outline: none;
+			cursor: pointer;
+			-webkit-appearance: none;
+			-moz-appearance: none;
+			appearance: none;
+			width: 90px;
+			flex-shrink: 0;
+			height: 100%;
+		}
+
+		/* 币种选择器样式 - 确保完全在输入框内部右侧 */
+		.currency-select-wrapper {
+			position: absolute;
+			top: 1px;
+			right: 1px;
+			bottom: 1px;
+			width: 80px;
+			border-left: 1px solid rgba(229, 231, 235, 0.3);
+			background: transparent;
+			border-radius: 0 11px 11px 0;
+			display: flex;
+			align-items: stretch;
+			z-index: 2;
+		}
+
+
+
+		.price-input-container .currency-select {
+			border: none !important;
+			background: transparent !important;
+			min-height: auto !important;
+			height: 100% !important;
+			width: 100% !important;
+			display: flex !important;
+			align-items: stretch !important;
+			position: relative !important;
+		}
+
+		.price-input-container .currency-select .custom-select-trigger {
+			border: none !important;
+			border-radius: 0 11px 11px 0 !important;
+			box-shadow: none !important;
+			background: transparent !important;
+			padding: 0 20px 0 8px !important;
+			font-size: 0.875rem !important;
+			font-weight: 500 !important;
+			color: #374151 !important;
+			min-height: auto !important;
+			height: 100% !important;
+			display: flex !important;
+			align-items: center !important;
+			justify-content: space-between !important;
+			position: relative !important;
+			width: 100% !important;
+			cursor: pointer !important;
+			box-sizing: border-box !important;
+		}
+
+		.price-input-container .currency-select .custom-select-trigger:hover {
+			background: rgba(249, 250, 251, 0.8) !important;
+		}
+
+		.price-input-container .currency-select .custom-select-dropdown {
+			position: absolute !important;
+			top: 100% !important;
+			right: 0 !important;
+			left: auto !important;
+			width: 120px !important;
+			z-index: 1001 !important;
+			max-height: 200px !important;
+			overflow-y: auto !important;
+			background: #ffffff !important;
+			border: 1px solid rgba(229, 231, 235, 0.3) !important;
+			border-radius: 8px !important;
+			box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+			margin-top: 4px !important;
+		}
+
+		.price-input-container .currency-select .custom-select-text {
+			flex: 1;
+			text-align: left;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+
+		.price-input-container .currency-select .custom-select-arrow {
+			position: absolute !important;
+			right: 6px !important;
+			top: 50% !important;
+					transform: translateY(-50%) !important;
+		transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+			width: 12px !important;
+			height: 12px !important;
+			color: #6b7280 !important;
+			flex-shrink: 0 !important;
+		}
+
+		.price-input-container .currency-select.open .custom-select-arrow {
+			transform: translateY(-50%) rotate(180deg) !important;
+		}
+
+		/* 币种下拉框滚动条样式 */
+		.price-input-container .currency-select .custom-select-dropdown::-webkit-scrollbar {
+			width: 6px;
+		}
+
+		.price-input-container .currency-select .custom-select-dropdown::-webkit-scrollbar-track {
+			background: rgba(243, 244, 246, 0.5);
+			border-radius: 3px;
+		}
+
+		.price-input-container .currency-select .custom-select-dropdown::-webkit-scrollbar-thumb {
+			background: rgba(156, 163, 175, 0.5);
+			border-radius: 3px;
+		}
+
+		.price-input-container .currency-select .custom-select-dropdown::-webkit-scrollbar-thumb:hover {
+			background: rgba(156, 163, 175, 0.7);
+		}
+
+		/* 确保币种选择器选项样式正确 */
+		.price-input-container .currency-select .custom-select-option {
+			padding: 10px 16px !important;
+			font-size: 0.875rem !important;
+			color: #374151 !important;
+			cursor: pointer !important;
+			transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+			border: none !important;
+			background: transparent !important;
+		}
+
+		.price-input-container .currency-select .custom-select-option:hover {
+			background-color: rgba(243, 244, 246, 0.8) !important;
+		}
+
+		.price-input-container .currency-select .custom-select-option.selected {
+			background-color: rgba(59, 130, 246, 0.1) !important;
+			color: #1d4ed8 !important;
+			font-weight: 500 !important;
+		}
+
+		/* 确保自定义下拉框基础样式 */
+		.custom-select {
+			position: relative;
+			display: block;
+		}
+
+		.custom-select.open .custom-select-dropdown {
+			display: block;
+		}
+
+		.custom-select:not(.open) .custom-select-dropdown {
+			display: none;
+		}
+
+		/* 现代化日历弹出框样式优化 */
+		.form-input[type="date"] {
+			position: relative;
+			color-scheme: light;
+		}
+
+		.form-input[type="date"]:focus {
+			z-index: 10;
+		}
+
+		/* 日历弹出框的现代化样式 - 通过全局CSS变量控制 */
+		:root {
+			--calendar-bg: #ffffff;
+			--calendar-border: rgba(229, 231, 235, 0.8);
+			--calendar-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+			--calendar-header-bg: #f8fafc;
+			--calendar-text: #374151;
+			--calendar-accent: #3b82f6;
+			--calendar-hover: #f1f5f9;
+		}
+
+		/* 隐藏所有日历图标 - 纯输入框模式 */
+		input[type="date"]::-webkit-calendar-picker-indicator,
+		.form-input[type="date"]::-webkit-calendar-picker-indicator,
+		#calcExpirationDate::-webkit-calendar-picker-indicator {
+			display: none !important;
+			-webkit-appearance: none !important;
+			appearance: none !important;
+			background: none !important;
+			width: 0 !important;
+			height: 0 !important;
+			opacity: 0 !important;
+			visibility: hidden !important;
+		}
+		
+		/* 隐藏Firefox的日历图标 */
+		input[type="date"]::-moz-calendar-picker-indicator,
+		.form-input[type="date"]::-moz-calendar-picker-indicator,
+		#calcExpirationDate::-moz-calendar-picker-indicator {
+			display: none !important;
+			-moz-appearance: none !important;
+			background: none !important;
+			width: 0 !important;
+			height: 0 !important;
+			opacity: 0 !important;
+			visibility: hidden !important;
+		}
+		
+		/* 隐藏Edge/IE的日历图标 */
+		input[type="date"]::-ms-clear,
+		.form-input[type="date"]::-ms-clear,
+		#calcExpirationDate::-ms-clear {
+			display: none !important;
+		}
+		
+		/* 强制移除所有日历相关的按钮和指示器 */
+		input[type="date"],
+		.form-input[type="date"],
+		#calcExpirationDate {
+			background-image: none !important;
+		}
+		
+		input[type="date"]::-webkit-inner-spin-button,
+		input[type="date"]::-webkit-outer-spin-button,
+		.form-input[type="date"]::-webkit-inner-spin-button,
+		.form-input[type="date"]::-webkit-outer-spin-button,
+		#calcExpirationDate::-webkit-inner-spin-button,
+		#calcExpirationDate::-webkit-outer-spin-button {
+			-webkit-appearance: none !important;
+			margin: 0 !important;
+			display: none !important;
+		}
+
+		.form-input[readonly] {
+			background: rgba(243, 244, 246, 0.8) !important;
+			cursor: not-allowed !important;
+			color: #6b7280 !important;
+			border-color: rgba(229, 231, 235, 0.3) !important;
+			transition: none !important;
+		}
+		
+		.form-input[readonly]:focus {
+			background: rgba(243, 244, 246, 0.8) !important;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+			border-color: rgba(229, 231, 235, 0.3) !important;
+			transition: none !important;
+		}
+
+		/* 确保只读输入框样式不被任何其他规则覆盖 */
+		#calcRemainingValueDisplay[readonly] {
+			background: rgba(243, 244, 246, 0.8) !important;
+			cursor: not-allowed !important;
+			color: #6b7280 !important;
+			border-color: rgba(229, 231, 235, 0.3) !important;
+			transition: none !important;
+		}
+		
+		#calcRemainingValueDisplay[readonly]:focus {
+			background: rgba(243, 244, 246, 0.8) !important;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+			border-color: rgba(229, 231, 235, 0.3) !important;
+			transition: none !important;
+		}
+
+		/* 确保计算详情区域也没有transition */
+		.calculation-details * {
+			transition: none !important;
+		}
+
+		/* 强制确保剩余价值输入框和计算详情框的样式完全固定 */
+		#calcRemainingValueDisplay {
+			background: rgba(243, 244, 246, 0.8) !important;
+			cursor: not-allowed !important;
+			color: #6b7280 !important;
+			border-color: rgba(229, 231, 235, 0.3) !important;
+			transition: none !important;
+			animation: none !important;
+			transform: none !important;
+		}
+
+		/* 确保ID选择器的优先级高于class选择器，从一开始就应用正确样式 */
+		#calcRemainingValueDisplay.form-input {
+			background: rgba(243, 244, 246, 0.8) !important;
+			cursor: not-allowed !important;
+			color: #6b7280 !important;
+			transition: none !important;
+		}
+
+		#calcRemainingValueDisplay:hover,
+		#calcRemainingValueDisplay:focus,
+		#calcRemainingValueDisplay:active {
+			background: rgba(243, 244, 246, 0.8) !important;
+			cursor: not-allowed !important;
+			color: #6b7280 !important;
+			border-color: rgba(229, 231, 235, 0.3) !important;
+			transition: none !important;
+			animation: none !important;
+			transform: none !important;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+		}
+
+		.calculation-details {
+			background: rgba(248, 250, 252, 0.95) !important;
+			border-radius: 12px !important;
+			padding: 20px !important;
+			backdrop-filter: none !important;
+			-webkit-backdrop-filter: none !important;
+			border: 1px solid rgba(226, 232, 240, 0.6) !important;
+			margin-top: 8px !important;
+			transition: none !important;
+			animation: none !important;
+			transform: none !important;
+		}
+
+		.calculation-details:hover,
+		.calculation-details:focus,
+		.calculation-details:active {
+			background: rgba(248, 250, 252, 0.95) !important;
+			transition: none !important;
+			animation: none !important;
+			transform: none !important;
+		}
+
+		/* 防止任何全局样式影响这两个关键元素 */
+		#calcRemainingValueDisplay,
+		.calculation-details,
+		.calculation-details div,
+		.calculation-details span,
+		.calculation-details strong {
+			-webkit-transition: none !important;
+			-moz-transition: none !important;
+			-o-transition: none !important;
+			transition: none !important;
+			-webkit-animation: none !important;
+			-moz-animation: none !important;
+			-o-animation: none !important;
+			animation: none !important;
+			-webkit-transform: none !important;
+			-moz-transform: none !important;
+			-o-transform: none !important;
+			transform: none !important;
+		}
+
+		.calculation-info {
+			font-size: 0.8125rem;
+			color: #475569;
+			line-height: 1.6;
+			font-weight: 500;
+		}
+
+		/* 计算状态样式类 */
+		.calc-pending {
+			background: rgba(156, 163, 175, 0.1) !important;
+			padding: 12px;
+			border-radius: 8px;
+			border-left: 4px solid #9ca3af;
+		}
+
+		.calc-success {
+			background: rgba(16, 185, 129, 0.1) !important;
+			padding: 12px;
+			border-radius: 8px;
+			border-left: 4px solid #10b981;
+		}
+
+		.calc-permanent {
+			background: rgba(34, 197, 94, 0.1) !important;
+			padding: 12px;
+			border-radius: 8px;
+			border-left: 4px solid #22c55e;
+		}
+
+		.calc-error {
+			background: rgba(239, 68, 68, 0.1) !important;
+			padding: 12px;
+			border-radius: 8px;
+			border-left: 4px solid #ef4444;
+	}
+
+	@media (min-width: 1200px) {
+		.cards-grid {
+				grid-template-columns: repeat(4, minmax(280px, 300px));
+				justify-content: center;
+		}
+	}
+
+	@media (min-width: 900px) and (max-width: 1199px) {
+		.cards-grid {
+				grid-template-columns: repeat(3, minmax(280px, 300px));
+				justify-content: center;
+		}
+	}
+
+	@media (min-width: 600px) and (max-width: 899px) {
+		.cards-grid {
+				grid-template-columns: repeat(2, minmax(280px, 320px));
+				justify-content: center;
+		}
+	}
+
+	@media (max-width: 599px) {
+		.cards-grid {
+			grid-template-columns: 1fr;
+				justify-content: center;
+				justify-items: center;
+			gap: 16px;
+		}
+
+		.container {
+			padding: 16px;
+		}
+
+		.content {
+			padding: 16px 0;
+		}
+			
+			body {
+				padding-bottom: 50px; /* 移动端稍微增加底部空间 */
+			}
+
+			.calculator-modal-content {
+				width: 95%;
+				padding: 24px 20px;
+				margin: 10px;
+			}
+
+			.form-row {
+				grid-template-columns: 1fr;
+				gap: 16px;
+		}
+
+		/* 移动端币种选择器优化 */
+		.currency-select-wrapper {
+			width: 75px;
+		}
+
+		.price-input-container input[type="number"] {
+			padding-right: 85px;
+		}
+
+		.price-input-container .currency-select .custom-select-trigger {
+			padding: 0 18px 0 6px !important;
+		}
+	}
+	
+	@media (max-width: 480px) {
+		.container {
+			padding: 12px;
+		}
+			
+			body {
+				padding-bottom: 55px; /* 小屏幕更多底部空间 */
+		}
+	}
+	</style>
+	
+	<!-- 强制隐藏日历图标的终极CSS规则 -->
+	<style>
+		/* 最高优先级 - 强制隐藏所有日历图标 */
+		* input[type="date"]::-webkit-calendar-picker-indicator,
+		* .form-input[type="date"]::-webkit-calendar-picker-indicator,
+		* #calcExpirationDate::-webkit-calendar-picker-indicator,
+		input[type="date"]::-webkit-calendar-picker-indicator,
+		.form-input[type="date"]::-webkit-calendar-picker-indicator,
+		#calcExpirationDate::-webkit-calendar-picker-indicator {
+			display: none !important;
+			-webkit-appearance: none !important;
+			appearance: none !important;
+			background: transparent !important;
+			background-image: none !important;
+			background-color: transparent !important;
+			width: 0 !important;
+			height: 0 !important;
+			opacity: 0 !important;
+			visibility: hidden !important;
+			position: absolute !important;
+			left: -9999px !important;
+			pointer-events: none !important;
+			margin: 0 !important;
+			padding: 0 !important;
+			border: none !important;
+			outline: none !important;
+			box-shadow: none !important;
+		}
+		
+		/* Firefox日历图标隐藏 */
+		* input[type="date"]::-moz-calendar-picker-indicator,
+		* .form-input[type="date"]::-moz-calendar-picker-indicator,
+		* #calcExpirationDate::-moz-calendar-picker-indicator {
+			display: none !important;
+			-moz-appearance: none !important;
+			background: none !important;
+			opacity: 0 !important;
+			visibility: hidden !important;
+		}
+		
+		/* 确保输入框本身没有背景图像 */
+		input[type="date"],
+		.form-input[type="date"],
+		#calcExpirationDate {
+			background-image: none !important;
+			background-position: unset !important;
+			background-repeat: no-repeat !important;
+			background-size: 0 !important;
+		}
+		
+		/* 强制移除任何可能的日历相关样式 */
+		input[type="date"]:before,
+		input[type="date"]:after,
+		.form-input[type="date"]:before,
+		.form-input[type="date"]:after,
+		#calcExpirationDate:before,
+		#calcExpirationDate:after {
+			display: none !important;
+			content: none !important;
+		}
+		/* 页面淡入动画 */
+		.page-wrapper {
+			animation: pageContentFadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+		
+		@keyframes pageContentFadeIn {
+			0% {
+				opacity: 0;
+				transform: translateY(16px);
+			}
+			40% {
+				opacity: 0.6;
+				transform: translateY(8px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+		
+		/* 页面加载时的内容渐现效果 */
+		.container {
+			animation: containerFadeIn 0.6s 0.1s cubic-bezier(0.4, 0, 0.2, 1) both;
+		}
+		
+		@keyframes containerFadeIn {
+			0% {
+				opacity: 0;
+				transform: translateY(8px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+		
+		/* 头部和内容分层动画 */
+		.header {
+			animation: headerFadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+		}
+		
+		@keyframes headerFadeIn {
+			0% {
+				opacity: 0;
+				transform: translateY(-8px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+		
+		.main-content {
+			animation: mainContentFadeIn 0.5s 0.15s cubic-bezier(0.4, 0, 0.2, 1) both;
+		}
+		
+		@keyframes mainContentFadeIn {
+			0% {
+				opacity: 0;
+				transform: translateY(12px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+		
+		/* 服务器卡片淡入动画 */
+		.server-card {
+			animation: cardFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+			opacity: 0;
+			transform: translateY(8px);
+		}
+		
+		/* 为不同位置的卡片设置延时动画 */
+		.server-card:nth-child(1) { animation-delay: 0s; }
+		.server-card:nth-child(2) { animation-delay: 0.05s; }
+		.server-card:nth-child(3) { animation-delay: 0.1s; }
+		.server-card:nth-child(4) { animation-delay: 0.15s; }
+		.server-card:nth-child(5) { animation-delay: 0.2s; }
+		.server-card:nth-child(6) { animation-delay: 0.25s; }
+		.server-card:nth-child(7) { animation-delay: 0.3s; }
+		.server-card:nth-child(8) { animation-delay: 0.35s; }
+		.server-card:nth-child(9) { animation-delay: 0.4s; }
+		.server-card:nth-child(10) { animation-delay: 0.45s; }
+		.server-card:nth-child(n+11) { animation-delay: 0.5s; }
+		
+		@keyframes cardFadeIn {
+			0% {
+				opacity: 0;
+				transform: translateY(8px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+		
+		/* 弹窗内容动画 */
+		.calculator-modal-content {
+			opacity: 0;
+			transform: translateY(-12px) scale(0.95);
+			transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+		
+		.calculator-modal.show .calculator-modal-content {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+		
+		.calculator-modal.closing {
+			background: rgba(0, 0, 0, 0) !important;
+			backdrop-filter: blur(0px) !important;
+			-webkit-backdrop-filter: blur(0px) !important;
+			opacity: 0 !important;
+			visibility: hidden !important;
+		}
+		
+		.calculator-modal.closing .calculator-modal-content {
+			opacity: 0;
+			transform: translateY(-8px) scale(0.98);
+		}
+		
+		/* 按钮和交互元素动画优化 */
+		button, .btn, .form-input, .custom-select-trigger {
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+		
+		button:hover, .btn:hover {
+			transform: translateY(-1px);
+		}
+		
+		button:active, .btn:active {
+			transform: translateY(0);
+		}
+		
+		/* 下拉框动画优化 */
+		.custom-select-dropdown {
+			opacity: 0;
+			transform: translateY(-4px);
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+		
+		.custom-select.open .custom-select-dropdown {
+			opacity: 1;
+			transform: translateY(0);
+		}
+		
+		/* 响应式动画优化 */
+		@media (prefers-reduced-motion: reduce) {
+			*,
+			*::before,
+			*::after {
+				animation-duration: 0.01ms !important;
+				animation-iteration-count: 1 !important;
+				transition-duration: 0.01ms !important;
+				scroll-behavior: auto !important;
+			}
+		}
+		
+		/* 平滑滚动 */
+		html {
+			scroll-behavior: smooth;
+		}
+		
+		/* 页面退出动画 */
+		body.page-exit {
+			opacity: 0;
+			transform: translateY(-8px);
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+	</style>
+</head>
+<body>
+	<div class="page-wrapper">
+		<div class="header">
+			<Header client:load />
+		</div>
+		
+		<main class="container">
+			<section class="content main-content">
+				<div class="cards-grid">
+					{servers.map(server => (
+						<ServerCard server={server} />
+					))}
+				</div>
+			</section>
+		</main>
+	</div>
+
+	<!-- 剩余价值计算器弹窗 -->
+	<div class="calculator-modal" id="calculatorModal">
+		<div class="calculator-modal-content">
+			<div class="calculator-header">
+				<h3 class="calculator-title">剩余价值计算器</h3>
+				<button class="calculator-close-btn" onclick="closeCalculatorModal()">&times;</button>
+			</div>
+			
+			<form class="calculator-form" id="calculatorForm">
+				<div class="form-row">
+					<div class="form-group">
+						<label class="form-label" for="calcRenewalPrice">续费价格 *</label>
+						<div class="price-input-container">
+							<input type="number" id="calcRenewalPriceAmount" placeholder="299" step="0.01" min="0" oninput="updateCalcRenewalPrice()" onchange="updateCalcRenewalPrice()">
+							<div class="currency-select-wrapper">
+								<div class="custom-select currency-select" id="calcRenewalPriceCurrencySelect">
+									<div class="custom-select-trigger" tabindex="0">
+										<span class="custom-select-text">CNY</span>
+										<svg class="custom-select-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+										</svg>
+									</div>
+									<div class="custom-select-dropdown">
+										<div class="custom-select-option" data-value="">币种</div>
+										<div class="custom-select-option" data-value="USD">USD</div>
+										<div class="custom-select-option" data-value="EUR">EUR</div>
+										<div class="custom-select-option" data-value="GBP">GBP</div>
+										<div class="custom-select-option" data-value="JPY">JPY</div>
+										<div class="custom-select-option selected" data-value="CNY">CNY</div>
+										<div class="custom-select-option" data-value="KRW">KRW</div>
+										<div class="custom-select-option" data-value="HKD">HKD</div>
+										<div class="custom-select-option" data-value="SGD">SGD</div>
+										<div class="custom-select-option" data-value="AUD">AUD</div>
+										<div class="custom-select-option" data-value="CAD">CAD</div>
+										<div class="custom-select-option" data-value="CHF">CHF</div>
+										<div class="custom-select-option" data-value="SEK">SEK</div>
+										<div class="custom-select-option" data-value="NOK">NOK</div>
+										<div class="custom-select-option" data-value="DKK">DKK</div>
+										<div class="custom-select-option" data-value="PLN">PLN</div>
+										<div class="custom-select-option" data-value="CZK">CZK</div>
+										<div class="custom-select-option" data-value="HUF">HUF</div>
+										<div class="custom-select-option" data-value="RON">RON</div>
+										<div class="custom-select-option" data-value="BGN">BGN</div>
+										<div class="custom-select-option" data-value="RUB">RUB</div>
+										<div class="custom-select-option" data-value="TRY">TRY</div>
+										<div class="custom-select-option" data-value="BRL">BRL</div>
+										<div class="custom-select-option" data-value="MXN">MXN</div>
+										<div class="custom-select-option" data-value="ARS">ARS</div>
+										<div class="custom-select-option" data-value="INR">INR</div>
+										<div class="custom-select-option" data-value="THB">THB</div>
+										<div class="custom-select-option" data-value="VND">VND</div>
+										<div class="custom-select-option" data-value="IDR">IDR</div>
+										<div class="custom-select-option" data-value="MYR">MYR</div>
+										<div class="custom-select-option" data-value="PHP">PHP</div>
+										<div class="custom-select-option" data-value="ZAR">ZAR</div>
+										<div class="custom-select-option" data-value="EGP">EGP</div>
+										<div class="custom-select-option" data-value="TWD">TWD</div>
+										<div class="custom-select-option" data-value="NZD">NZD</div>
+										<div class="custom-select-option" data-value="ILS">ILS</div>
+										<div class="custom-select-option" data-value="SAR">SAR</div>
+										<div class="custom-select-option" data-value="AED">AED</div>
+										<div class="custom-select-option" data-value="QAR">QAR</div>
+										<div class="custom-select-option" data-value="KWD">KWD</div>
+										<div class="custom-select-option" data-value="BHD">BHD</div>
+										<div class="custom-select-option" data-value="OMR">OMR</div>
+									</div>
+								</div>
+							</div>
+						</div>
+						<input type="hidden" id="calcRenewalPrice">
+						<input type="hidden" id="calcRenewalPriceCurrency" value="CNY">
+					</div>
+					
+					<div class="form-group">
+						<label class="form-label" for="calcRenewalCycle">续费周期 *</label>
+						<div class="custom-select" id="calcRenewalCycleSelect">
+							<div class="custom-select-trigger" tabindex="0">
+								<span class="custom-select-text">请选择周期</span>
+								<svg class="custom-select-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+								</svg>
+							</div>
+							<div class="custom-select-dropdown">
+								<div class="custom-select-option selected" data-value="">请选择周期</div>
+								<div class="custom-select-option" data-value="月付">月付</div>
+								<div class="custom-select-option" data-value="季付">季付</div>
+								<div class="custom-select-option" data-value="半年付">半年付</div>
+								<div class="custom-select-option" data-value="年付">年付</div>
+								<div class="custom-select-option" data-value="两年付">两年付</div>
+								<div class="custom-select-option" data-value="三年付">三年付</div>
+								<div class="custom-select-option" data-value="五年付">五年付</div>
+								<div class="custom-select-option" data-value="永久">永久</div>
+							</div>
+						</div>
+						<input type="hidden" id="calcRenewalCycle" name="calcRenewalCycle" value="">
+					</div>
+				</div>
+
+				<div class="form-row">
+					<div class="form-group">
+						<label class="form-label" for="calcExpirationDate">到期日期 *</label>
+						<input type="text" id="calcExpirationDate" class="form-input" placeholder="YYYY-MM-DD (如：2025-12-31)" onchange="calculateRemainingValue()">
+					</div>
+					
+					<div class="form-group">
+						<label class="form-label" for="calcRemainingValue">剩余价值 <span style="font-size: 0.75rem; color: #6b7280;">(自动计算)</span></label>
+						<input type="text" id="calcRemainingValueDisplay" class="form-input" placeholder="将自动计算" readonly>
+						<input type="hidden" id="calcRemainingValue">
+					</div>
+				</div>
+
+				<!-- 计算详情信息 -->
+				<div class="form-group full-width">
+					<label class="form-label">计算详情</label>
+					<div class="calculation-details">
+						<div id="calcRemainingValueInfo" class="calculation-info">请填写续费价格、续费周期和到期日期开始计算</div>
+					</div>
+				</div>
+
+
+			</form>
+		</div>
+	</div>
+
+	<Footer client:load />
+
+	<script is:inline>
+		// 极简版本：仅处理页面显示，完全自然布局
+		function initialize() {
+			const cardsGrid = document.querySelector('.cards-grid');
+			if (!cardsGrid) return;
+
+			// 显示卡片网格
+			setTimeout(() => {
+				cardsGrid.classList.add('initialized');
+			}, 100);
+		}
+
+		// 初始化自定义下拉框
+		function initCalcCustomSelect() {
+			// 初始化续费周期下拉框
+			const renewalCycleSelectId = 'calcRenewalCycleSelect';
+			const renewalCycleSelect = document.getElementById(renewalCycleSelectId);
+			if (renewalCycleSelect) {
+				initSingleCustomSelect(renewalCycleSelectId, 'calcRenewalCycle', handleCalcRenewalCycleChange);
+			}
+			
+			// 初始化币种下拉框
+			const currencySelectId = 'calcRenewalPriceCurrencySelect';
+			const currencySelect = document.getElementById(currencySelectId);
+			if (currencySelect) {
+				initSingleCustomSelect(currencySelectId, 'calcRenewalPriceCurrency', updateCalcRenewalPrice);
+			}
+		}
+		
+		// 初始化单个自定义下拉框
+		function initSingleCustomSelect(selectId, hiddenInputId, changeHandler) {
+			const select = document.getElementById(selectId);
+			if (!select) return;
+			
+			const trigger = select.querySelector('.custom-select-trigger');
+			const dropdown = select.querySelector('.custom-select-dropdown');
+			const options = select.querySelectorAll('.custom-select-option');
+			const hiddenInput = hiddenInputId ? document.getElementById(hiddenInputId) : null;
+			
+			// 点击触发器切换下拉框
+			trigger.addEventListener('click', function() {
+				closeCalcSelects();
+				select.classList.toggle('open');
+			});
+			
+			// 键盘导航支持
+			trigger.addEventListener('keydown', function(e) {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					closeCalcSelects();
+					select.classList.toggle('open');
+				}
+			});
+			
+			// 选项点击事件
+			options.forEach(option => {
+				option.addEventListener('click', function() {
+					const value = this.getAttribute('data-value');
+					const text = this.textContent;
+					
+					// 更新显示文本
+					trigger.querySelector('.custom-select-text').textContent = text;
+					
+					// 更新隐藏输入框值
+					if (hiddenInput) {
+						hiddenInput.value = value;
+					}
+					
+					// 更新选中状态
+					options.forEach(opt => opt.classList.remove('selected'));
+					this.classList.add('selected');
+					
+					// 关闭下拉框
+					select.classList.remove('open');
+					
+					// 触发change事件
+					if (changeHandler) {
+						changeHandler();
+					}
+				});
+			});
+		}
+		
+		// 关闭所有下拉框
+		function closeCalcSelects() {
+			document.querySelectorAll('.custom-select').forEach(select => {
+				select.classList.remove('open');
+			});
+		}
+		
+		// 点击外部关闭下拉框
+		document.addEventListener('click', function(e) {
+			if (!e.target.closest('.custom-select')) {
+				closeCalcSelects();
+			}
+		});
+
+		// 初始化日期输入框
+		function initDateInput() {
+			const dateInput = document.getElementById('calcExpirationDate');
+			if (dateInput) {
+				// 添加输入格式化
+				dateInput.addEventListener('input', function() {
+					formatDateInput(this);
+				});
+				
+				// 添加失焦验证
+				dateInput.addEventListener('blur', function() {
+					const value = this.value.trim();
+					if (value && !validateDateFormat(value)) {
+						this.style.borderColor = '#ef4444';
+						this.style.boxShadow = '0 0 0 3px rgba(239, 68, 68, 0.1)';
+						// 可以添加错误提示
+					} else {
+						this.style.borderColor = '';
+						this.style.boxShadow = '';
+					}
+				});
+				
+				// 添加获焦时清除错误样式
+				dateInput.addEventListener('focus', function() {
+					this.style.borderColor = '';
+					this.style.boxShadow = '';
+				});
+			}
+		}
+
+		// 页面加载完成后初始化
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', function() {
+				initialize();
+				initCalcCustomSelect();
+				initDateInput();
+			});
+		} else {
+			initialize();
+			initCalcCustomSelect();
+			initDateInput();
+		}
+
+		// Astro 页面切换后重新初始化
+		document.addEventListener('astro:after-swap', initialize);
+
+		// 打开计算器弹窗
+		function openCalculatorModal() {
+			const modal = document.getElementById('calculatorModal');
+			modal.classList.remove('closing');
+			
+			// 使用requestAnimationFrame确保动画流畅
+			requestAnimationFrame(() => {
+				modal.classList.add('show');
+			});
+			
+			// 清空表单
+			document.getElementById('calculatorForm').reset();
+			document.getElementById('calcRemainingValueDisplay').value = '';
+			document.getElementById('calcRemainingValueInfo').innerHTML = '请填写续费价格、续费周期和到期日期开始计算';
+			
+			// 重新初始化日期输入框
+			setTimeout(() => {
+				initDateInput();
+			}, 50);
+		}
+
+		// 关闭计算器弹窗
+		function closeCalculatorModal() {
+			const modal = document.getElementById('calculatorModal');
+			modal.classList.add('closing');
+			
+			// 等待动画完成后移除显示类
+			setTimeout(() => {
+				modal.classList.remove('show', 'closing');
+			}, 300);
+		}
+
+		// 简化的样式确保函数 - 只在需要时执行
+		function ensureFixedStyles() {
+			const remainingValueDisplay = document.getElementById('calcRemainingValueDisplay');
+			if (remainingValueDisplay) {
+				// 确保readonly属性存在
+				remainingValueDisplay.setAttribute('readonly', 'readonly');
+			}
+		}
+
+		// 页面加载后确保readonly属性
+		document.addEventListener('DOMContentLoaded', ensureFixedStyles);
+
+		// 将函数绑定到全局作用域
+		window.openCalculatorModal = openCalculatorModal;
+		window.closeCalculatorModal = closeCalculatorModal;
+
+		// 点击弹窗外部关闭
+		document.getElementById('calculatorModal').addEventListener('click', (e) => {
+			if (e.target === e.currentTarget) {
+				closeCalculatorModal();
+			}
+		});
+
+		// 验证日期格式
+		function validateDateFormat(dateString) {
+			// 检查基本格式 YYYY-MM-DD
+			const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+			if (!dateRegex.test(dateString)) {
+				return false;
+			}
+			
+			// 检查是否是有效日期
+			const date = new Date(dateString);
+			const [year, month, day] = dateString.split('-').map(Number);
+			
+			return date.getFullYear() === year &&
+				   date.getMonth() === month - 1 &&
+				   date.getDate() === day;
+		}
+		
+		// 格式化日期输入
+		function formatDateInput(input) {
+			let value = input.value.replace(/[^\d-]/g, ''); // 只保留数字和横线
+			
+			// 自动添加横线
+			if (value.length >= 4 && value.indexOf('-') === -1) {
+				value = value.slice(0, 4) + '-' + value.slice(4);
+			}
+			if (value.length >= 7 && value.lastIndexOf('-') === 4) {
+				value = value.slice(0, 7) + '-' + value.slice(7);
+			}
+			
+			// 限制长度
+			if (value.length > 10) {
+				value = value.slice(0, 10);
+			}
+			
+			input.value = value;
+		}
+
+		// 更新续费价格隐藏字段
+		function updateCalcRenewalPrice() {
+			const amount = document.getElementById('calcRenewalPriceAmount').value;
+			const currencySelect = document.getElementById('calcRenewalPriceCurrencySelect');
+			const selectedOption = currencySelect ? currencySelect.querySelector('.custom-select-option.selected') : null;
+			const currency = selectedOption ? selectedOption.getAttribute('data-value') : '';
+			
+			if (amount && currency) {
+				document.getElementById('calcRenewalPrice').value = `${amount} ${currency}`;
+				calculateRemainingValue();
+			} else {
+				document.getElementById('calcRenewalPrice').value = '';
+			}
+		}
+		
+		// 获取币种选择器的值
+		function getCalcCurrencyValue() {
+			const currencySelect = document.getElementById('calcRenewalPriceCurrencySelect');
+			const selectedOption = currencySelect ? currencySelect.querySelector('.custom-select-option.selected') : null;
+			return selectedOption ? selectedOption.getAttribute('data-value') : '';
+		}
+
+		// 处理续费周期变化
+		function handleCalcRenewalCycleChange() {
+			const renewalCycle = document.getElementById('calcRenewalCycle').value;
+			const expirationDateInput = document.getElementById('calcExpirationDate');
+			
+			if (renewalCycle === '永久') {
+				// 永久服务器：禁用到期日期输入
+				expirationDateInput.disabled = true;
+				expirationDateInput.value = '';
+				expirationDateInput.style.background = 'rgba(156, 163, 175, 0.3)';
+				expirationDateInput.style.cursor = 'not-allowed';
+				expirationDateInput.placeholder = '永久服务器无到期日期';
+			} else {
+				// 非永久服务器：启用到期日期输入
+				expirationDateInput.disabled = false;
+				expirationDateInput.style.background = '#ffffff';
+				expirationDateInput.style.cursor = '';
+				expirationDateInput.placeholder = '';
+			}
+			
+			// 重新计算价值
+			calculateRemainingValue();
+		}
+
+		// 将函数绑定到全局作用域
+		window.updateCalcRenewalPrice = updateCalcRenewalPrice;
+		window.handleCalcRenewalCycleChange = handleCalcRenewalCycleChange;
+
+		// 从管理页面复制的计算逻辑
+		// 货币符号映射表
+		const currencySymbols = {
+			'$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'CNY', '₹': 'INR', '₩': 'KRW', '₽': 'RUB',
+			'US$': 'USD', 'A$': 'AUD', 'C$': 'CAD', 'HK$': 'HKD', 'S$': 'SGD', 'NZ$': 'NZD'
+		};
+
+		// 汇率缓存
+		let exchangeRatesCache = {};
+
+		// 获取当前日期字符串
+		function getCurrentDateString() {
+			const today = new Date();
+			return today.toISOString().split('T')[0];
+		}
+
+		// 清除过期的汇率缓存
+		function cleanExpiredCache() {
+			const today = getCurrentDateString();
+			const keysToDelete = [];
+			
+			for (const key in exchangeRatesCache) {
+				if (!key.includes(today)) {
+					keysToDelete.push(key);
+				}
+			}
+			
+			keysToDelete.forEach(key => {
+				delete exchangeRatesCache[key];
+			});
+		}
+
+		// 从价格字符串中识别货币
+		function detectCurrency(priceString) {
+			if (!priceString || typeof priceString !== 'string') {
+				return { currency: 'CNY', amount: 0 };
+			}
+			
+			const trimmed = priceString.trim();
+			
+			// 新格式：数字 + 空格 + 货币代码
+			const newFormatMatch = trimmed.match(/^([0-9,.]+)\s+([A-Z]{3})$/i);
+			if (newFormatMatch) {
+				const amount = parseFloat(newFormatMatch[1].replace(/[,]/g, ''));
+				const currency = newFormatMatch[2].toUpperCase();
+				return { currency, amount };
+			}
+			
+			// 默认当作人民币处理
+			const amount = parseFloat(trimmed.replace(/[,\s¥]/g, '')) || 0;
+			return { currency: 'CNY', amount };
+		}
+
+		// 获取汇率
+		async function getExchangeRates(baseCurrency = 'USD') {
+			const today = getCurrentDateString();
+			const cacheKey = `${baseCurrency}_${today}`;
+			
+			cleanExpiredCache();
+			
+			if (exchangeRatesCache[cacheKey]) {
+				return exchangeRatesCache[cacheKey];
+			}
+			
+			const apiUrl = `https://open.er-api.com/v6/latest/${baseCurrency}`;
+			
+			try {
+				const response = await fetch(apiUrl);
+				
+				if (!response.ok) {
+					throw new Error(`HTTP ${response.status}`);
+				}
+				
+				const data = await response.json();
+				
+				if (!data.rates || typeof data.rates !== 'object') {
+					throw new Error('汇率数据格式错误');
+				}
+				
+				const rates = { [baseCurrency]: 1, ...data.rates };
+				
+				const rateData = {
+					rates: rates,
+					baseCurrency: baseCurrency,
+					date: today,
+					timestamp: Date.now(),
+					source: 'ExchangeRate-API',
+					isRealTime: true,
+					cacheKey: cacheKey
+				};
+				
+				exchangeRatesCache[cacheKey] = rateData;
+				
+				return rateData;
+			} catch (error) {
+				throw new Error(`无法获取${baseCurrency}基准汇率，请检查网络连接后重试`);
+			}
+		}
+
+		// 转换汇率
+		async function convertCurrency(amount, fromCurrency, toCurrency) {
+			if (fromCurrency === toCurrency) {
+				return amount;
+			}
+			
+			try {
+				const rateData = await getExchangeRates(fromCurrency);
+				const rates = rateData.rates;
+				
+				if (!rates[toCurrency]) {
+					throw new Error(`不支持的货币转换: ${fromCurrency} -> ${toCurrency}`);
+				}
+				
+				const convertedAmount = amount * rates[toCurrency];
+				return convertedAmount;
+			} catch (error) {
+				throw error;
+			}
+		}
+
+		// 根据续费周期计算月数
+		function getCycleMonths(cycle) {
+			const cycleMap = {
+				'月付': 1, '季付': 3, '半年付': 6, '年付': 12,
+				'两年付': 24, '三年付': 36, '五年付': 60, '永久': 0
+			};
+			return cycleMap[cycle] || 0;
+		}
+
+		// 推算购买日期
+		function calculatePurchaseDate(expirationDate, renewalCycle) {
+			if (!expirationDate || !renewalCycle || renewalCycle === '永久') {
+				return null;
+			}
+			
+			const expDate = new Date(expirationDate);
+			const months = getCycleMonths(renewalCycle);
+			
+			if (months === 0) return null;
+			
+			const purchaseDate = new Date(expDate);
+			purchaseDate.setMonth(purchaseDate.getMonth() - months);
+			
+			return purchaseDate;
+		}
+
+		// 计算天数差异
+		function calculateDaysDifference(startDate, endDate) {
+			const start = new Date(startDate);
+			const end = new Date(endDate);
+			
+			const timeDiff = end.getTime() - start.getTime();
+			const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+			
+			return daysDiff;
+		}
+
+		// 计算剩余天数占比
+		function calculateRemainingRatio(purchaseDate, expirationDate, today = new Date()) {
+			if (!purchaseDate || !expirationDate) {
+				return 0;
+			}
+			
+			const totalDays = calculateDaysDifference(purchaseDate, expirationDate);
+			const remainingDays = Math.max(0, calculateDaysDifference(today, expirationDate));
+			
+			if (totalDays <= 0) {
+				return 0;
+			}
+			
+			const ratio = remainingDays / totalDays;
+			return Math.max(0, Math.min(1, ratio));
+		}
+
+		// 计算剩余价值
+		async function calculateRemainingValue() {
+			try {
+				document.getElementById('calcRemainingValueDisplay').value = '计算中...';
+				document.getElementById('calcRemainingValueInfo').innerHTML = '正在计算，请稍候...';
+				
+				const renewalPriceString = document.getElementById('calcRenewalPrice').value;
+				const { currency: renewalCurrency, amount: renewalPrice } = detectCurrency(renewalPriceString);
+				const renewalCycle = document.getElementById('calcRenewalCycle').value;
+				const expirationDate = document.getElementById('calcExpirationDate').value;
+				
+				// 检查必要字段
+				if (renewalPrice === null || renewalPrice === undefined || renewalPrice === '' || !renewalCycle || 
+					(renewalCycle !== '永久' && !expirationDate)) {
+					document.getElementById('calcRemainingValue').value = '';
+					document.getElementById('calcRemainingValueDisplay').value = '';
+					document.getElementById('calcRemainingValueInfo').innerHTML = `
+						<div class="calc-pending">
+							<strong style="color: #6b7280;">📋 待计算</strong><br>
+							<span style="color: #6b7280;">请填写续费价格、续费周期和到期日期</span>
+						</div>
+					`;
+					return;
+				}
+				
+				// 检查是否为永久服务器
+				if (renewalCycle === '永久') {
+					const remainingValueOriginal = renewalPrice;
+					
+					let remainingValueCNY = 0;
+					if (renewalPrice > 0) {
+						remainingValueCNY = await convertCurrency(remainingValueOriginal, renewalCurrency, 'CNY');
+					}
+					
+					if (renewalPrice === 0) {
+						document.getElementById('calcRemainingValue').value = `0 ${renewalCurrency}`;
+						document.getElementById('calcRemainingValueDisplay').value = `¥0.00`;
+					} else {
+						document.getElementById('calcRemainingValue').value = `${remainingValueOriginal} ${renewalCurrency}`;
+						document.getElementById('calcRemainingValueDisplay').value = `¥${remainingValueCNY.toFixed(2)}`;
+					}
+					
+					let renewalRateData = null;
+					let renewalToCnyRate = 0;
+					if (renewalPrice > 0) {
+						renewalRateData = await getExchangeRates(renewalCurrency);
+						renewalToCnyRate = renewalRateData.rates['CNY'];
+					}
+					
+					const calculationDateStr = new Date().toLocaleDateString('zh-CN');
+					const rateDate = renewalRateData ? renewalRateData.date || getCurrentDateString() : getCurrentDateString();
+					
+					let detailsHTML;
+					if (renewalPrice === 0) {
+						detailsHTML = `
+							<div class="calc-permanent">
+								<strong style="color: #16a34a;">🆓 永久免费服务器</strong><br>
+								<span style="color: #059669;">计算基准日期:</span> ${calculationDateStr}<br>
+								<span style="color: #059669;">续费价格:</span> ${renewalPrice} ${renewalCurrency} (免费)<br>
+								<span style="color: #059669;">剩余价值:</span> ${remainingValueOriginal} ${renewalCurrency} = ¥0.00<br>
+								<span style="color: #6b7280; font-size: 0.75rem;">永久免费服务器无需汇率转换</span>
+							</div>
+						`;
+					} else {
+						detailsHTML = `
+							<div class="calc-permanent">
+								<strong style="color: #16a34a;">💎 永久服务器</strong><br>
+								<span style="color: #059669;">计算基准日期:</span> ${calculationDateStr}<br>
+								<span style="color: #059669;">续费价格:</span> ${renewalPrice} ${renewalCurrency}<br>
+								<span style="color: #059669;">剩余价值:</span> ${remainingValueOriginal} ${renewalCurrency} ≈ ¥${remainingValueCNY.toFixed(2)}<br>
+								<span style="color: #6b7280; font-size: 0.75rem;">汇率 (${rateDate}): 1 ${renewalCurrency} = ¥${renewalToCnyRate.toFixed(4)}</span>
+							</div>
+						`;
+					}
+					
+					document.getElementById('calcRemainingValueInfo').innerHTML = detailsHTML;
+					return;
+				}
+				
+				// 推算购买日期
+				const purchaseDate = calculatePurchaseDate(expirationDate, renewalCycle);
+				
+				if (!purchaseDate) {
+					document.getElementById('calcRemainingValue').value = '计算错误';
+					document.getElementById('calcRemainingValueDisplay').value = '计算错误';
+					document.getElementById('calcRemainingValueInfo').innerHTML = '无法推算购买日期，请检查续费周期设置';
+					return;
+				}
+				
+				// 计算剩余天数占比
+				const calculationDate = new Date();
+				calculationDate.setHours(0, 0, 0, 0);
+				
+				const remainingRatio = calculateRemainingRatio(purchaseDate, expirationDate, calculationDate);
+				
+				// 计算剩余价值
+				const remainingValueOriginal = renewalPrice * remainingRatio;
+				
+				// 转换为人民币
+				const remainingValueCNY = await convertCurrency(remainingValueOriginal, renewalCurrency, 'CNY');
+				
+				// 计算天数信息
+				const totalDays = calculateDaysDifference(purchaseDate, expirationDate);
+				const remainingDays = Math.max(0, calculateDaysDifference(calculationDate, expirationDate));
+				const remainingPercentage = (remainingRatio * 100).toFixed(1);
+				
+				// 获取汇率信息
+				const renewalRateData = await getExchangeRates(renewalCurrency);
+				const renewalToCnyRate = renewalRateData.rates['CNY'];
+				
+				// 更新显示
+				document.getElementById('calcRemainingValue').value = `${remainingValueOriginal.toFixed(2)} ${renewalCurrency}`;
+				document.getElementById('calcRemainingValueDisplay').value = `¥${remainingValueCNY.toFixed(2)}`;
+				
+				const purchaseDateStr = purchaseDate.toLocaleDateString('zh-CN');
+				const expirationDateStr = new Date(expirationDate).toLocaleDateString('zh-CN');
+				const calculationDateStr = calculationDate.toLocaleDateString('zh-CN');
+				const rateDate = renewalRateData.date || getCurrentDateString();
+				
+				document.getElementById('calcRemainingValueInfo').innerHTML = `
+					<div class="calc-success">
+						<strong style="color: #059669;">📊 剩余价值计算</strong><br>
+						<span style="color: #047857;">推算购买日期:</span> ${purchaseDateStr}<br>
+						<span style="color: #047857;">到期日期:</span> ${expirationDateStr}<br>
+						<span style="color: #047857;">计算基准日期:</span> ${calculationDateStr}<br>
+						<span style="color: #047857;">续费价格:</span> ${renewalPrice} ${renewalCurrency}<br>
+						<span style="color: #047857;">剩余时间:</span> ${remainingDays}天 / 总计${totalDays}天 (${remainingPercentage}%)<br>
+						<span style="color: #047857;">剩余价值:</span> ${remainingValueOriginal.toFixed(2)} ${renewalCurrency} ≈ ¥${remainingValueCNY.toFixed(2)}<br>
+						<span style="color: #6b7280; font-size: 0.75rem;">汇率 (${rateDate}): 1 ${renewalCurrency} = ¥${renewalToCnyRate.toFixed(4)}</span>
+					</div>
+				`;
+				
+			} catch (error) {
+				console.error('计算失败:', error);
+				let errorMessage = '计算失败';
+				
+				if (error.message.includes('无法获取')) {
+					errorMessage = '无法获取汇率';
+					document.getElementById('calcRemainingValueInfo').innerHTML = `
+						<div class="calc-error">
+							<strong style="color: #dc2626;">⚠️ 汇率获取失败</strong><br>
+							<span style="color: #b91c1c;">无法获取实时汇率，请检查网络连接或稍后重试</span>
+						</div>
+					`;
+				} else {
+					document.getElementById('calcRemainingValueInfo').innerHTML = `
+						<div class="calc-error">
+							<strong style="color: #dc2626;">❌ 计算错误</strong><br>
+							<span style="color: #b91c1c;">计算过程中出现错误: ${error.message}</span>
+						</div>
+					`;
+				}
+				
+				document.getElementById('calcRemainingValue').value = errorMessage;
+				document.getElementById('calcRemainingValueDisplay').value = errorMessage;
+			}
+		}
+
+		// 将函数绑定到全局作用域
+		window.calculateRemainingValue = calculateRemainingValue;
+	</script>
+</body>
 </html>

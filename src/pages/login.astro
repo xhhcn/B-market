@@ -1,0 +1,737 @@
+---
+// 移除Header和Footer导入
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>登录 - B-Market 服务器管理平台</title>
+	<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+	
+	<!-- 全局API配置 - 支持Docker环境变量配置 -->
+	<script is:inline>
+		window.API_CONFIG = {
+			baseUrl: (() => {
+				// 1. 优先使用预定义的环境变量（在构建时注入）
+				const envApiUrl = '{PUBLIC_API_BASE_URL}'; // 构建时会被环境变量替换
+				if (envApiUrl && envApiUrl !== '{PUBLIC_API_BASE_URL}') {
+					// login页面需要基础URL，不包含/api路径
+					return envApiUrl.replace('/api', '');
+				}
+				
+				// 2. 动态检测当前环境
+				if (typeof window !== 'undefined') {
+					const currentHost = window.location.hostname;
+					const currentProtocol = window.location.protocol;
+					
+					// 生产环境检测（非本地开发）
+					if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+						// 在Docker环境中，客户端应该通过同样的域名和端口访问API
+						return `${currentProtocol}//${currentHost}:3001`;
+					}
+				}
+				
+				// 3. 开发环境默认配置
+				return 'http://localhost:3001';
+			})()
+		};
+		console.log('🔗 登录页面API配置:', window.API_CONFIG.baseUrl);
+	</script>
+	
+	<style>
+		/* 全局样式重置 */
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+		
+		html {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", sans-serif;
+			line-height: 1.6;
+		}
+		
+		/* 使用与admin页面统一的背景 */
+		body {
+			background: url('/background.svg') no-repeat center center fixed;
+			background-size: cover;
+			color: #1a1a1a;
+			min-height: 100vh;
+			position: relative;
+		}
+		
+		body::before {
+			content: '';
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(255, 255, 255, 0.1);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			z-index: -1;
+		}
+		
+		/* 页面容器 */
+		.login-wrapper {
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 20px;
+			animation: fadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+		}
+		
+		@keyframes fadeIn {
+			0% {
+				opacity: 0;
+				transform: translateY(20px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+		
+		/* 登录卡片 - 简约扁平化设计 */
+		.login-card {
+			background: rgba(255, 255, 255, 0.15);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 16px;
+			padding: 32px;
+			width: 100%;
+			max-width: 400px;
+			backdrop-filter: blur(20px);
+			-webkit-backdrop-filter: blur(20px);
+			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+			animation: cardSlideIn 0.6s 0.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+		}
+		
+		@keyframes cardSlideIn {
+			0% {
+				opacity: 0;
+				transform: translateY(30px) scale(0.95);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0) scale(1);
+			}
+		}
+		
+		/* Logo和标题区域 */
+		.login-header {
+			text-align: center;
+			margin-bottom: 28px;
+		}
+		
+		.login-logo {
+			width: 48px;
+			height: 48px;
+			margin: 0 auto 16px auto;
+			background: linear-gradient(135deg, #f59e0b 0%, #dc2626 100%);
+			border-radius: 12px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font-size: 24px;
+			font-weight: 700;
+			color: white;
+		}
+		
+		.login-title {
+			font-size: 1.375rem;
+			font-weight: 600;
+			color: #1f2937;
+			margin-bottom: 6px;
+		}
+		
+		.login-subtitle {
+			color: #6b7280;
+			font-size: 0.875rem;
+			font-weight: 400;
+		}
+		
+		/* 表单样式 */
+		.login-form {
+			display: flex;
+			flex-direction: column;
+			gap: 16px;
+		}
+		
+		.form-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0;
+		}
+		
+		.form-label {
+			display: none;
+		}
+		
+		.form-input {
+			width: 100%;
+			padding: 14px 16px;
+			border: 1px solid rgba(209, 213, 219, 0.6);
+			border-radius: 8px;
+			font-size: 0.9375rem;
+			background: rgba(255, 255, 255, 0.8);
+			color: #374151;
+			line-height: 1.5;
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+			box-sizing: border-box;
+		}
+		
+		.form-input:focus {
+			outline: none;
+			border-color: #3b82f6;
+			box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+		}
+		
+		.form-input::placeholder {
+			color: #9ca3af;
+		}
+		
+		/* 密码强度指示器 - 简约设计 */
+		.password-strength {
+			margin-top: 8px;
+			padding: 12px;
+			background: rgba(248, 250, 252, 0.8);
+			border-radius: 6px;
+			font-size: 0.75rem;
+			display: none;
+		}
+		
+		.password-strength.show {
+			display: block;
+		}
+		
+		.strength-item {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			margin-bottom: 4px;
+		}
+		
+		.strength-item:last-child {
+			margin-bottom: 0;
+		}
+		
+		.strength-check {
+			width: 14px;
+			height: 14px;
+			border-radius: 3px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font-size: 9px;
+			color: white;
+			font-weight: 600;
+		}
+		
+		.strength-check.valid {
+			background: #10b981;
+		}
+		
+		.strength-check.invalid {
+			background: #ef4444;
+		}
+		
+		/* 登录按钮 - 简约扁平化 */
+		.login-btn {
+			width: 100%;
+			padding: 14px 24px;
+			background: #3b82f6;
+			color: white;
+			border: none;
+			border-radius: 8px;
+			font-size: 0.9375rem;
+			font-weight: 500;
+			cursor: pointer;
+			transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+			position: relative;
+			overflow: hidden;
+			margin-top: 8px;
+			box-sizing: border-box;
+		}
+		
+		.login-btn:hover {
+			background: #2563eb;
+		}
+		
+		.login-btn:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+		}
+		
+		.btn-text {
+			transition: opacity 0.2s;
+		}
+		
+		.btn-loading {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			opacity: 0;
+			transition: opacity 0.2s;
+		}
+		
+		.login-btn.loading .btn-text {
+			opacity: 0;
+		}
+		
+		.login-btn.loading .btn-loading {
+			opacity: 1;
+		}
+		
+		/* 加载动画 */
+		.spinner {
+			width: 16px;
+			height: 16px;
+			border: 2px solid rgba(255, 255, 255, 0.3);
+			border-top: 2px solid white;
+			border-radius: 50%;
+			animation: spin 0.8s linear infinite;
+		}
+		
+		@keyframes spin {
+			0% { transform: rotate(0deg); }
+			100% { transform: rotate(360deg); }
+		}
+		
+		/* 消息提示 - 优化设计 */
+		.message {
+			padding: 12px 16px;
+			border-radius: 8px;
+			font-size: 0.9375rem;
+			font-weight: 500;
+			margin-top: 16px;
+			text-align: center;
+			animation: messageSlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+			position: relative;
+			overflow: hidden;
+		}
+		
+		@keyframes messageSlideIn {
+			0% {
+				opacity: 0;
+				transform: translateY(-10px) scale(0.98);
+			}
+			100% {
+				opacity: 1;
+				transform: translateY(0) scale(1);
+			}
+		}
+		
+		.message.error {
+			background: linear-gradient(135deg, rgba(254, 242, 242, 0.95) 0%, rgba(254, 242, 242, 0.9) 100%);
+			color: #dc2626;
+			border: 1px solid rgba(239, 68, 68, 0.3);
+			box-shadow: 0 2px 8px rgba(239, 68, 68, 0.1);
+		}
+		
+		.message.success {
+			background: linear-gradient(135deg, rgba(240, 253, 244, 0.95) 0%, rgba(236, 253, 245, 0.9) 100%);
+			color: #047857;
+			border: 1px solid rgba(34, 197, 94, 0.3);
+			box-shadow: 0 4px 12px rgba(34, 197, 94, 0.15);
+		}
+		
+		.message.success::before {
+			content: '✓';
+			position: absolute;
+			left: 12px;
+			top: 50%;
+			transform: translateY(-50%);
+			font-size: 1rem;
+			font-weight: 700;
+			color: #10b981;
+		}
+		
+		.message.success {
+			padding-left: 36px;
+		}
+		
+		/* 返回首页链接 */
+		.back-link {
+			text-align: center;
+			margin-top: 20px;
+		}
+		
+		.back-link a {
+			color: #6b7280;
+			text-decoration: none;
+			font-size: 0.875rem;
+			font-weight: 400;
+			transition: color 0.2s;
+		}
+		
+		.back-link a:hover {
+			color: #374151;
+		}
+		
+		/* 响应式设计 */
+		@media (max-width: 480px) {
+			.login-wrapper {
+				padding: 16px;
+			}
+			
+			.login-card {
+				padding: 24px;
+			}
+			
+			.form-input {
+				font-size: 16px; /* 防止iOS缩放 */
+			}
+		}
+		
+		/* 无障碍支持 */
+		@media (prefers-reduced-motion: reduce) {
+			*,
+			*::before,
+			*::after {
+				animation-duration: 0.01ms !important;
+				animation-iteration-count: 1 !important;
+				transition-duration: 0.01ms !important;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div class="login-wrapper">
+		<div class="login-card">
+			<div class="login-header">
+				<div class="login-logo">B</div>
+				<h1 class="login-title" id="loginTitle">管理系统登录</h1>
+				<p class="login-subtitle" id="loginSubtitle">请输入密码访问管理控制台</p>
+			</div>
+			
+			<form class="login-form" id="loginForm">
+				<!-- 首次设置密码的字段 -->
+				<div class="form-group" id="newPasswordGroup" style="display: none;">
+					<label class="form-label" for="newPassword">设置密码</label>
+					<input 
+						type="password" 
+						id="newPassword" 
+						class="form-input" 
+						placeholder="请设置管理密码"
+						autocomplete="new-password"
+					>
+					<div class="password-strength" id="passwordStrength">
+						<div class="strength-item">
+							<div class="strength-check invalid" id="lengthCheck">×</div>
+							<span>至少8位字符</span>
+						</div>
+						<div class="strength-item">
+							<div class="strength-check invalid" id="lowercaseCheck">×</div>
+							<span>包含小写字母</span>
+						</div>
+						<div class="strength-item">
+							<div class="strength-check invalid" id="uppercaseCheck">×</div>
+							<span>包含大写字母</span>
+						</div>
+						<div class="strength-item">
+							<div class="strength-check invalid" id="numberCheck">×</div>
+							<span>包含数字</span>
+						</div>
+						<div class="strength-item">
+							<div class="strength-check invalid" id="specialCheck">×</div>
+							<span>包含特殊字符(@$!%*?&)</span>
+						</div>
+					</div>
+				</div>
+				
+				<div class="form-group" id="confirmPasswordGroup" style="display: none;">
+					<label class="form-label" for="confirmPassword">确认密码</label>
+					<input 
+						type="password" 
+						id="confirmPassword" 
+						class="form-input" 
+						placeholder="请再次输入密码"
+						autocomplete="new-password"
+					>
+				</div>
+				
+				<!-- 登录密码字段 -->
+				<div class="form-group" id="passwordGroup">
+					<label class="form-label" for="password">管理密码</label>
+					<input 
+						type="password" 
+						id="password" 
+						class="form-input" 
+						placeholder="请输入管理密码"
+						autocomplete="current-password"
+					>
+				</div>
+				
+				<button type="submit" class="login-btn" id="loginBtn">
+					<span class="btn-text" id="btnText">登录</span>
+					<div class="btn-loading">
+						<div class="spinner"></div>
+					</div>
+				</button>
+				
+				<div id="messageContainer"></div>
+			</form>
+			
+			<div class="back-link">
+				<a href="/">← 返回首页</a>
+			</div>
+		</div>
+	</div>
+
+	<script is:inline>
+		let isFirstLogin = false;
+		let isLoading = false;
+
+		// API基础URL - Docker单容器反向代理模式
+		const API_BASE_URL = (() => {
+			const currentHost = window.location.hostname;
+			if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
+				// 开发环境直接访问API端口
+				return 'http://localhost:3001';
+			} else {
+				// 生产环境（Docker）：使用反向代理，去掉/api后缀
+				return '';
+			}
+		})();
+
+		// 页面初始化
+		async function initLoginPage() {
+			try {
+				// 检查是否为首次登录
+				const response = await fetch(`${API_BASE_URL}/api/auth/check-first-login`);
+				const result = await response.json();
+				
+				if (result.success) {
+					isFirstLogin = result.isFirstLogin;
+					updateUI();
+				}
+			} catch (error) {
+				console.error('检查登录状态失败:', error);
+				showMessage('网络连接失败，请检查API服务器状态', 'error');
+			}
+		}
+
+		// 更新UI界面
+		function updateUI() {
+			const title = document.getElementById('loginTitle');
+			const subtitle = document.getElementById('loginSubtitle');
+			const btnText = document.getElementById('btnText');
+			const newPasswordGroup = document.getElementById('newPasswordGroup');
+			const confirmPasswordGroup = document.getElementById('confirmPasswordGroup');
+			const passwordGroup = document.getElementById('passwordGroup');
+
+			if (isFirstLogin) {
+				title.textContent = '首次使用设置';
+				subtitle.textContent = '请为管理系统设置一个安全密码';
+				btnText.textContent = '完成设置';
+				
+				// 显示设置密码字段
+				newPasswordGroup.style.display = 'block';
+				confirmPasswordGroup.style.display = 'block';
+				passwordGroup.style.display = 'none';
+				
+				// 绑定密码强度检查
+				const newPasswordInput = document.getElementById('newPassword');
+				newPasswordInput.addEventListener('input', checkPasswordStrength);
+				newPasswordInput.addEventListener('focus', () => {
+					document.getElementById('passwordStrength').classList.add('show');
+				});
+			} else {
+				title.textContent = '管理系统登录';
+				subtitle.textContent = '请输入密码访问管理控制台';
+				btnText.textContent = '登录';
+				
+				// 显示登录字段
+				newPasswordGroup.style.display = 'none';
+				confirmPasswordGroup.style.display = 'none';
+				passwordGroup.style.display = 'block';
+			}
+		}
+
+		// 检查密码强度
+		function checkPasswordStrength() {
+			const password = document.getElementById('newPassword').value;
+			
+			const checks = {
+				length: password.length >= 8,
+				lowercase: /[a-z]/.test(password),
+				uppercase: /[A-Z]/.test(password),
+				number: /\d/.test(password),
+				special: /[@$!%*?&]/.test(password)
+			};
+			
+			// 更新检查项目状态
+			Object.keys(checks).forEach(check => {
+				const element = document.getElementById(check + 'Check');
+				if (checks[check]) {
+					element.className = 'strength-check valid';
+					element.textContent = '✓';
+				} else {
+					element.className = 'strength-check invalid';
+					element.textContent = '×';
+				}
+			});
+			
+			return Object.values(checks).every(check => check);
+		}
+
+		// 显示消息
+		function showMessage(message, type = 'error') {
+			const container = document.getElementById('messageContainer');
+			container.innerHTML = `<div class="message ${type}">${message}</div>`;
+		}
+
+		// 清除消息
+		function clearMessages() {
+			const container = document.getElementById('messageContainer');
+			container.innerHTML = '';
+		}
+
+		// 表单提交处理
+		async function handleSubmit(event) {
+			event.preventDefault();
+			
+			if (isLoading) return;
+			
+			const form = event.target;
+			const loginBtn = document.getElementById('loginBtn');
+			const btnText = document.getElementById('btnText');
+			
+			try {
+				isLoading = true;
+				loginBtn.classList.add('loading');
+				loginBtn.disabled = true;
+				
+				clearMessages();
+				
+				if (isFirstLogin) {
+					await handleFirstTimeSetup();
+				} else {
+					await handleLogin();
+				}
+			} catch (error) {
+				console.error('处理表单提交失败:', error);
+				showMessage('操作失败，请重试', 'error');
+				// 恢复按钮文字
+				if (isFirstLogin) {
+					btnText.textContent = '完成设置';
+				} else {
+					btnText.textContent = '登录';
+				}
+			} finally {
+				isLoading = false;
+				loginBtn.classList.remove('loading');
+				loginBtn.disabled = false;
+			}
+		}
+
+		// 处理首次设置密码
+		async function handleFirstTimeSetup() {
+			const newPassword = document.getElementById('newPassword').value;
+			const confirmPassword = document.getElementById('confirmPassword').value;
+			const btnText = document.getElementById('btnText');
+			
+			// 验证输入
+			if (!newPassword || !confirmPassword) {
+				showMessage('请填写密码和确认密码', 'error');
+				return;
+			}
+			
+			if (newPassword !== confirmPassword) {
+				showMessage('两次输入的密码不一致', 'error');
+				return;
+			}
+			
+			if (!checkPasswordStrength()) {
+				showMessage('密码不符合安全要求，请检查密码强度指示器', 'error');
+				return;
+			}
+			
+			// 更新按钮文字为"设置中"
+			btnText.textContent = '设置中';
+			
+			// 发送设置密码请求
+			const response = await fetch(`${API_BASE_URL}/api/auth/setup-password`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				credentials: 'include',
+				body: JSON.stringify({
+					password: newPassword,
+					confirmPassword: confirmPassword
+				})
+			});
+			
+			const result = await response.json();
+			
+			if (result.success) {
+				// 保存session token
+				localStorage.setItem('sessionToken', result.sessionToken);
+				
+				// 直接跳转到管理页面，不显示成功消息
+				window.location.href = '/admin';
+			} else {
+				// 恢复按钮文字
+				btnText.textContent = '完成设置';
+				showMessage(result.message || '设置密码失败', 'error');
+			}
+		}
+
+		// 处理登录
+		async function handleLogin() {
+			const password = document.getElementById('password').value;
+			const btnText = document.getElementById('btnText');
+			
+			if (!password) {
+				showMessage('请输入密码', 'error');
+				return;
+			}
+			
+			// 更新按钮文字为"登录中"
+			btnText.textContent = '登录中';
+			
+			// 发送登录请求
+			const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				credentials: 'include',
+				body: JSON.stringify({
+					password: password
+				})
+			});
+			
+			const result = await response.json();
+			
+			if (result.success) {
+				// 保存session token
+				localStorage.setItem('sessionToken', result.sessionToken);
+				
+				// 直接跳转到管理页面，不显示成功消息
+				window.location.href = '/admin';
+			} else {
+				// 显示登录失败按钮状态
+				btnText.textContent = '登录失败';
+				
+				// 2秒后恢复按钮文字
+				setTimeout(() => {
+					btnText.textContent = '登录';
+				}, 2000);
+			}
+		}
+
+		// 绑定表单提交事件
+		document.getElementById('loginForm').addEventListener('submit', handleSubmit);
+
+		// 页面加载时初始化
+		document.addEventListener('DOMContentLoaded', initLoginPage);
+	</script>
+</body>
+</html> 

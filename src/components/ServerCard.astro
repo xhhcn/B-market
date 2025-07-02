@@ -1,0 +1,690 @@
+---
+import { CpuIcon, MemoryIcon, StorageIcon, CashIcon, ArrowDownIcon } from './Icons.jsx';
+import { BsHddNetwork } from 'react-icons/bs';
+import TransactionInfo from './TransactionInfo.jsx';
+import RelatedInfo from './RelatedInfo.jsx';
+
+export interface Props {
+  server: {
+    id: number;
+    merchant: string;
+    region: string;
+    countryCode: string;
+    serverType: string;
+    renewalPrice: string;
+    transactionDate: string;
+    expirationDate: string;
+    remainingValue: string;
+    salePrice: string;
+    premiumValue: string;
+    status: string;
+    statusChangedDate?: string;
+    cpu: string;
+    memory: string;
+    storage: string;
+    traffic: string;
+    tags: string[];
+    relatedLinks: { name: string; url: string }[];
+    telegramLink?: string;
+    nodeseekLink?: string;
+  };
+}
+
+const { server } = Astro.props;
+
+// 获取状态颜色
+function getStatusColor(status) {
+  return status === '出售' ? 'status-available' : 'status-sold';
+}
+
+// 格式化已售日期显示
+function formatSoldDate(dateString) {
+  if (!dateString) return '';
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+  } catch (error) {
+    return '';
+  }
+}
+
+// 检查社交链接是否存在且非空
+const hasTelegramLink = server.telegramLink && server.telegramLink.trim() !== '';
+const hasNodeseekLink = server.nodeseekLink && server.nodeseekLink.trim() !== '';
+const hasSocialLinks = hasTelegramLink || hasNodeseekLink;
+
+// 验证国家代码是否有效，用于首页显示（无效则使用 xx）
+function getValidCountryCodeForDisplay(countryCode) {
+  if (!countryCode || typeof countryCode !== 'string') {
+    return 'xx';
+  }
+  
+  // 标准的ISO 3166-1 alpha-2国家代码列表（部分常用的）
+  const validCountryCodes = [
+    'ad', 'ae', 'af', 'ag', 'ai', 'al', 'am', 'ao', 'aq', 'ar', 'as', 'at', 'au', 'aw', 'ax', 'az',
+    'ba', 'bb', 'bd', 'be', 'bf', 'bg', 'bh', 'bi', 'bj', 'bl', 'bm', 'bn', 'bo', 'bq', 'br', 'bs', 'bt', 'bv', 'bw', 'by', 'bz',
+    'ca', 'cc', 'cd', 'cf', 'cg', 'ch', 'ci', 'ck', 'cl', 'cm', 'cn', 'co', 'cr', 'cu', 'cv', 'cw', 'cx', 'cy', 'cz',
+    'de', 'dj', 'dk', 'dm', 'do', 'dz',
+    'ec', 'ee', 'eg', 'eh', 'er', 'es', 'et', 'eu',
+    'fi', 'fj', 'fk', 'fm', 'fo', 'fr',
+    'ga', 'gb', 'gd', 'ge', 'gf', 'gg', 'gh', 'gi', 'gl', 'gm', 'gn', 'gp', 'gq', 'gr', 'gs', 'gt', 'gu', 'gw', 'gy',
+    'hk', 'hm', 'hn', 'hr', 'ht', 'hu',
+    'id', 'ie', 'il', 'im', 'in', 'io', 'iq', 'ir', 'is', 'it',
+    'je', 'jm', 'jo', 'jp',
+    'ke', 'kg', 'kh', 'ki', 'km', 'kn', 'kp', 'kr', 'kw', 'ky', 'kz',
+    'la', 'lb', 'lc', 'li', 'lk', 'lr', 'ls', 'lt', 'lu', 'lv', 'ly',
+    'ma', 'mc', 'md', 'me', 'mf', 'mg', 'mh', 'mk', 'ml', 'mm', 'mn', 'mo', 'mp', 'mq', 'mr', 'ms', 'mt', 'mu', 'mv', 'mw', 'mx', 'my', 'mz',
+    'na', 'nc', 'ne', 'nf', 'ng', 'ni', 'nl', 'no', 'np', 'nr', 'nu', 'nz',
+    'om',
+    'pa', 'pe', 'pf', 'pg', 'ph', 'pk', 'pl', 'pm', 'pn', 'pr', 'ps', 'pt', 'pw', 'py',
+    'qa',
+    're', 'ro', 'rs', 'ru', 'rw',
+    'sa', 'sb', 'sc', 'sd', 'se', 'sg', 'sh', 'si', 'sj', 'sk', 'sl', 'sm', 'sn', 'so', 'sr', 'ss', 'st', 'sv', 'sx', 'sy', 'sz',
+    'tc', 'td', 'tf', 'tg', 'th', 'tj', 'tk', 'tl', 'tm', 'tn', 'to', 'tr', 'tt', 'tv', 'tw', 'tz',
+    'ua', 'ug', 'um', 'us', 'uy', 'uz',
+    'va', 'vc', 've', 'vg', 'vi', 'vn', 'vu',
+    'wf', 'ws',
+    'ye', 'yt',
+    'za', 'zm', 'zw'
+  ];
+  
+  const code = countryCode.toLowerCase().trim();
+  return validCountryCodes.includes(code) ? code : 'xx';
+}
+---
+
+<div class="server-card">
+  <div class="card-header">
+    <div class="merchant-info">
+      <div class="merchant-title">
+        <div class="flag-container">
+          <span class={`fi fi-${getValidCountryCodeForDisplay(server.countryCode)} flag-icon`}></span>
+          <p class="server-type">{server.serverType}</p>
+        </div>
+        <h3 class="merchant-name">{server.merchant}</h3>
+      </div>
+    </div>
+    
+    <div class={`status-container ${getStatusColor(server.status)}`}>
+      <div class="status-badge">
+        <svg class="status-icon" viewBox="0 0 24 24" fill="currentColor">
+          {server.status === '出售' ? 
+            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/> :
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+          }
+        </svg>
+        {server.status}
+      </div>
+      {server.status === '已售' && server.statusChangedDate && (
+        <div class="sold-date">
+          {formatSoldDate(server.statusChangedDate)}
+        </div>
+      )}
+    </div>
+  </div>
+
+  <div class="card-content">
+    <div class="config-section">
+      <div class="config-item">
+        <div class="config-icon">
+          <CpuIcon client:load />
+        </div>
+        <span class="config-text">CPU {server.cpu}</span>
+      </div>
+      
+      <div class="config-item">
+        <div class="config-icon">
+          <MemoryIcon client:load />
+        </div>
+        <span class="config-text">内存 {server.memory}</span>
+      </div>
+      
+      <div class="config-item">
+        <div class="config-icon">
+          <StorageIcon client:load />
+        </div>
+        <span class="config-text">存储 {server.storage}</span>
+      </div>
+      
+      {server.traffic && (
+        <div class="config-item">
+          <div class="config-icon">
+            <BsHddNetwork client:load />
+          </div>
+          <span class="config-text">流量 {server.traffic}</span>
+        </div>
+      )}
+      
+      <div class="config-item">
+        <div class="config-icon">
+          <CashIcon client:load />
+        </div>
+        <span class="config-text">出售金额 {server.salePrice}</span>
+      </div>
+      
+      <TransactionInfo server={server} client:load />
+      
+      <RelatedInfo server={server} client:load />
+      
+      {hasSocialLinks && (
+        <div class="social-links">
+          {hasTelegramLink && (
+            <a href={server.telegramLink} target="_blank" class="social-link">
+              <img src="/telegram.png" alt="Telegram" class="social-icon" />
+            </a>
+          )}
+          {hasNodeseekLink && (
+            <a href={server.nodeseekLink} target="_blank" class="social-link">
+              <img src="/nodeseek.png" alt="NodeSeek" class="social-icon" />
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+    
+
+  </div>
+</div>
+
+<style>
+  .server-card {
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    transition: all 0.3s ease;
+    height: auto;
+    min-height: 360px;
+    width: 100%;
+    min-width: 280px;
+    max-width: 320px;
+    margin: 0 auto;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .server-card:hover {
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 4px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-4px);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+  }
+  
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f5f5f5;
+  }
+
+  .merchant-info {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+  
+  .merchant-title {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  
+  .flag-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  
+  .flag-icon {
+    width: 42px;
+    height: 32px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  
+  .merchant-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin: 0;
+    line-height: 1.3;
+    word-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
+    margin-top: 2px;
+    max-width: 100%;
+  }
+
+  .server-type {
+    font-size: 0.6875rem;
+    color: #6b7280;
+    margin: 0;
+    font-weight: 500;
+    text-align: center;
+  }
+  
+  .status-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: white;
+    white-space: nowrap;
+  }
+  
+  .status-icon {
+    width: 12px;
+    height: 12px;
+  }
+  
+  .status-available .status-badge {
+    background: #10b981;
+  }
+  
+  .status-sold .status-badge {
+    background: #6b7280;
+  }
+  
+  .sold-date {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    font-weight: 400;
+    text-align: right;
+    line-height: 1.2;
+    margin-top: 2px;
+  }
+  
+  .card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  
+  .config-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .config-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  
+
+  
+  .config-icon {
+    width: 16px;
+    height: 16px;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  
+  .config-text {
+    font-size: 0.875rem;
+    color: #6b7280;
+    font-weight: 500;
+  }
+  
+  .social-links {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: flex-start;
+  }
+  
+  .social-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    opacity: 0.8;
+  }
+  
+  .social-link:hover {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  
+  .social-icon {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+  }
+  
+
+  
+
+  
+  .tags-section,
+  .links-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  
+  .tags-section label,
+  .links-section label {
+    font-size: 0.875rem;
+    color: #6b7280;
+    font-weight: 500;
+  }
+  
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  
+  .tag {
+    background: rgba(243, 244, 246, 0.8);
+    color: #374151;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border: 1px solid rgba(229, 231, 235, 0.8);
+  }
+  
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  
+  .link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #3b82f6;
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: color 0.2s ease;
+  }
+  
+  .link:hover {
+    color: #1d4ed8;
+  }
+  
+  .link-icon {
+    width: 12px;
+    height: 12px;
+    opacity: 0.7;
+  }
+  
+  /* 平板端优化 */
+  @media (max-width: 900px) {
+    .server-card {
+      min-height: 350px;
+    }
+    
+    .merchant-title {
+      gap: 10px;
+    }
+    
+    .merchant-name {
+      font-size: 0.9375rem;
+    }
+    
+    .flag-icon {
+      width: 40px;
+      height: 30px;
+    }
+    
+    .server-type {
+      font-size: 0.625rem;
+    }
+    
+    .status-badge {
+      font-size: 0.8125rem;
+      padding: 3px 10px;
+    }
+    
+
+    
+    .config-text {
+      font-size: 0.8125rem;
+    }
+    
+    .config-icon {
+      width: 14px;
+      height: 14px;
+    }
+    
+    .social-links {
+      gap: 10px;
+    }
+    
+    .social-link {
+      width: 22px;
+      height: 22px;
+    }
+    
+    .social-icon {
+      width: 18px;
+      height: 18px;
+    }
+    
+
+  }
+
+  /* 中等屏幕优化 */
+  @media (max-width: 600px) {
+    .server-card {
+      min-height: 320px;
+    }
+  }
+
+  /* 移动端优化 */
+  @media (max-width: 768px) {
+    .server-card {
+      padding: 14px;
+      min-height: 330px;
+    }
+    
+    .merchant-title {
+      gap: 6px;
+    }
+    
+    .merchant-title {
+      gap: 8px;
+      margin-bottom: 3px;
+    }
+    
+    .flag-container {
+      gap: 1px;
+    }
+    
+    .flag-icon {
+      width: 42px;
+      height: 32px;
+    }
+    
+    .merchant-name {
+      font-size: 0.875rem;
+      margin-top: 1px;
+    }
+    
+    .server-type {
+      font-size: 0.625rem;
+    }
+    
+    .status-badge {
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      gap: 3px;
+    }
+    
+    .config-section {
+      gap: 10px;
+    }
+    
+    .config-text {
+      font-size: 0.8125rem;
+    }
+    
+    .config-icon {
+      width: 14px;
+      height: 14px;
+    }
+    
+    .social-links {
+      gap: 10px;
+    }
+    
+    .social-link {
+      width: 26px;
+      height: 26px;
+    }
+    
+    .social-icon {
+      width: 22px;
+      height: 22px;
+    }
+    
+
+    
+    .card-header {
+      flex-direction: row;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+    }
+    
+
+  }
+  
+  /* 小屏移动端进一步优化 */
+  @media (max-width: 480px) {
+    .server-card {
+      padding: 12px;
+      min-height: 280px;
+    }
+    
+    .card-header {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+    }
+    
+    .merchant-title {
+      gap: 6px;
+      margin-bottom: 2px;
+    }
+    
+    .flag-container {
+      gap: 1px;
+    }
+    
+    .flag-icon {
+      width: 38px;
+      height: 29px;
+    }
+    
+    .merchant-name {
+      font-size: 0.8125rem;
+      margin-top: 1px;
+    }
+    
+    .server-type {
+      font-size: 0.5625rem;
+    }
+    
+    .status-badge {
+      font-size: 0.6875rem;
+      padding: 2px 6px;
+    }
+    
+    .config-text {
+      font-size: 0.8125rem;
+    }
+    
+    .social-links {
+      gap: 8px;
+    }
+    
+    .social-link {
+      width: 24px;
+      height: 24px;
+    }
+    
+    .social-icon {
+      width: 20px;
+      height: 20px;
+    }
+    
+    .card-content {
+      gap: 12px;
+    }
+  }
+  
+  /* 超小屏设备优化 */
+  @media (max-width: 360px) {
+    .server-card {
+      padding: 12px;
+      min-height: 240px;
+    }
+    
+
+    
+    .config-text {
+      font-size: 0.75rem;
+    }
+  }
+  
+  /* 极小屏设备优化 */
+  @media (max-width: 320px) {
+    .server-card {
+      padding: 10px;
+      min-height: 220px;
+    }
+    
+    .merchant-name {
+      font-size: 0.75rem;
+    }
+    
+    .config-text {
+      font-size: 0.6875rem;
+    }
+    
+    .status-badge {
+      font-size: 0.625rem;
+      padding: 2px 6px;
+    }
+  }
+</style> 

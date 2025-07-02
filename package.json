@@ -1,14 +1,21 @@
 {
-  "name": "market",
+  "name": "b-market",
   "type": "module",
   "version": "0.0.1",
   "scripts": {
-    "dev": "astro dev",
+    "dev": "astro dev --host 0.0.0.0",
+    "start": "astro dev --host 0.0.0.0",
     "build": "astro build",
-    "preview": "astro preview",
+    "preview": "astro preview --host 0.0.0.0",
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^5.10.1"
+    "@astrojs/node": "^8.3.4",
+    "@astrojs/react": "^4.3.0",
+    "astro": "^4.0.0",
+    "flag-icons": "^7.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-icons": "^5.5.0"
   }
 }
