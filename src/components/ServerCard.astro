@@ -97,7 +97,16 @@ function getValidCountryCodeForDisplay(countryCode) {
 }
 ---
 
-<div class="server-card">
+<div class="server-card" 
+     data-server-id={server.id}
+     data-renewal-cycle={server.renewalCycle}
+     data-expiration-date={server.expirationDate}
+     data-status={server.status}
+     data-status-changed-date={server.statusChangedDate}
+     data-sale-price={server.salePrice}
+     data-renewal-price={server.renewalPrice}
+     data-remaining-value={server.remainingValue}
+     data-premium-value={server.premiumValue}>
   <div class="card-header">
     <div class="merchant-info">
       <div class="merchant-title">
@@ -163,7 +172,7 @@ function getValidCountryCodeForDisplay(countryCode) {
         <div class="config-icon">
           <CashIcon client:load />
         </div>
-        <span class="config-text">出售金额 {server.salePrice}</span>
+        <span class="config-text">出售金额 <span class="sale-price">{server.salePrice}</span></span>
       </div>
       
       <TransactionInfo server={server} client:load />

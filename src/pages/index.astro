@@ -1371,6 +1371,8 @@ const totalRemainingValue = servers.reduce((total, server) => {
 		</div>
 	</div>
 
+
+
 	<Footer client:load />
 
 	<script is:inline>
@@ -1992,6 +1994,218 @@ const totalRemainingValue = servers.reduce((total, server) => {
 
 		// 将函数绑定到全局作用域
 		window.calculateRemainingValue = calculateRemainingValue;
+
+		// 从后端API获取最新的服务器数据并同步到首页
+		async function autoUpdateServerValues() {
+			console.log('🔄 开始从后端获取最新的服务器数据...');
+			
+			try {
+				// 从API获取最新的服务器数据
+				const response = await fetch(window.API_CONFIG.baseUrl + '/servers');
+				if (!response.ok) {
+					throw new Error(`API请求失败: ${response.status}`);
+				}
+				
+				const result = await response.json();
+				if (!result.success || !result.data) {
+					throw new Error('API返回数据格式错误');
+				}
+				
+				const latestServers = result.data;
+				console.log(`📡 获取到 ${latestServers.length} 个服务器的最新数据`);
+				
+				// 获取页面上的所有服务器卡片
+				const serverCards = document.querySelectorAll('.server-card');
+				let updatedCount = 0;
+				
+				// 为每个服务器卡片更新数据
+				serverCards.forEach((card) => {
+					const serverId = card.dataset.serverId;
+					if (!serverId) return;
+					
+					// 根据ID找到对应的服务器数据
+					const serverData = latestServers.find(server => server.id.toString() === serverId);
+					if (!serverData) {
+						console.warn(`❌ 未找到ID为 ${serverId} 的服务器数据`);
+						return;
+					}
+					
+					// 跳过已售服务器 - 已售服务器的数据应该保持在售出时刻的状态
+					if (serverData.status === '已售') {
+						console.log(`⏭️ 跳过已售服务器 ${serverData.merchant}（数据保持在售出时刻）`);
+						return;
+					}
+					
+					let hasUpdates = false;
+					
+					// 获取DOM元素
+					const remainingValueElement = card.querySelector('.remaining-value');
+					const premiumValueElement = card.querySelector('.premium-value');
+					
+					// 更新剩余价值
+					const newRemainingValue = serverData.remainingValue || '-';
+					const oldRemainingValue = card.dataset.remainingValue;
+					
+					if (oldRemainingValue !== newRemainingValue) {
+						// 更新数据属性
+						card.dataset.remainingValue = newRemainingValue;
+						
+						// 更新DOM显示（如果元素存在）
+						if (remainingValueElement) {
+							remainingValueElement.textContent = newRemainingValue;
+							remainingValueElement.style.color = '#16a34a';
+							remainingValueElement.style.fontWeight = '600';
+							
+							// 短暂高亮显示更新
+							remainingValueElement.style.transition = 'all 0.3s ease';
+							setTimeout(() => {
+								remainingValueElement.style.color = '';
+								remainingValueElement.style.fontWeight = '';
+							}, 2000);
+						}
+						
+						hasUpdates = true;
+						console.log(`✅ 更新 ${serverData.merchant} 剩余价值: ${oldRemainingValue} -> ${newRemainingValue}`);
+					}
+					
+					// 更新溢价信息
+					const newPremiumValue = serverData.premiumValue || '-';
+					const oldPremiumValue = card.dataset.premiumValue;
+					
+					if (oldPremiumValue !== newPremiumValue) {
+						// 更新数据属性
+						card.dataset.premiumValue = newPremiumValue;
+						
+						// 更新DOM显示（如果元素存在）
+						if (premiumValueElement) {
+							premiumValueElement.textContent = newPremiumValue;
+							
+							// 根据溢价正负设置颜色（只对有效数值设置颜色）
+							if (newPremiumValue !== '-' && newPremiumValue !== '') {
+								const premiumNum = parseFloat(newPremiumValue.replace('¥', '').replace(',', ''));
+								if (!isNaN(premiumNum)) {
+									if (premiumNum >= 0) {
+										premiumValueElement.style.color = '#dc2626'; // 红色表示溢价
+									} else {
+										premiumValueElement.style.color = '#16a34a'; // 绿色表示折价
+									}
+									premiumValueElement.style.fontWeight = '600';
+								}
+							}
+							
+							// 短暂高亮显示更新
+							premiumValueElement.style.transition = 'all 0.3s ease';
+							setTimeout(() => {
+								if (newPremiumValue === '-') {
+									premiumValueElement.style.color = '';
+									premiumValueElement.style.fontWeight = '';
+								}
+							}, 2000);
+						}
+						
+						hasUpdates = true;
+						console.log(`✅ 更新 ${serverData.merchant} 溢价信息: ${oldPremiumValue} -> ${newPremiumValue}`);
+					}
+					
+					// 如果有更新，计入更新计数
+					if (hasUpdates) {
+						updatedCount++;
+					}
+				});
+				
+				
+				// 显示更新结果
+				if (updatedCount > 0) {
+					console.log(`✅ 已同步更新 ${updatedCount} 个服务器的最新数据`);
+					
+					// 显示更新提示
+					const notification = document.createElement('div');
+					notification.style.cssText = `
+						position: fixed;
+						top: 20px;
+						right: 20px;
+						background: linear-gradient(135deg, #16a34a, #15803d);
+						color: white;
+						padding: 12px 20px;
+						border-radius: 8px;
+						box-shadow: 0 4px 15px rgba(22, 163, 74, 0.3);
+						z-index: 10000;
+						font-size: 14px;
+						font-weight: 500;
+						opacity: 0;
+						transform: translateX(100%);
+						transition: all 0.3s ease;
+					`;
+					notification.textContent = `📡 已同步 ${updatedCount} 个服务器的最新数据`;
+					
+					document.body.appendChild(notification);
+					
+					// 显示动画
+					setTimeout(() => {
+						notification.style.opacity = '1';
+						notification.style.transform = 'translateX(0)';
+					}, 100);
+					
+					// 自动隐藏
+					setTimeout(() => {
+						notification.style.opacity = '0';
+						notification.style.transform = 'translateX(100%)';
+						setTimeout(() => notification.remove(), 300);
+					}, 3000);
+				} else {
+					console.log('ℹ️ 所有服务器数据都是最新的，无需更新');
+				}
+				
+			} catch (error) {
+				console.error('❌ 获取最新服务器数据失败:', error);
+				
+				// 显示错误提示
+				const errorNotification = document.createElement('div');
+				errorNotification.style.cssText = `
+					position: fixed;
+					top: 20px;
+					right: 20px;
+					background: linear-gradient(135deg, #dc2626, #b91c1c);
+					color: white;
+					padding: 12px 20px;
+					border-radius: 8px;
+					box-shadow: 0 4px 15px rgba(220, 38, 38, 0.3);
+					z-index: 10000;
+					font-size: 14px;
+					font-weight: 500;
+					opacity: 0;
+					transform: translateX(100%);
+					transition: all 0.3s ease;
+				`;
+				errorNotification.textContent = `❌ 无法获取最新数据，请稍后重试`;
+				
+				document.body.appendChild(errorNotification);
+				
+				// 显示动画
+				setTimeout(() => {
+					errorNotification.style.opacity = '1';
+					errorNotification.style.transform = 'translateX(0)';
+				}, 100);
+				
+				// 自动隐藏
+				setTimeout(() => {
+					errorNotification.style.opacity = '0';
+					errorNotification.style.transform = 'translateX(100%)';
+					setTimeout(() => errorNotification.remove(), 300);
+				}, 5000);
+			}
+		}
+		
+		// 页面加载完成后自动更新
+		document.addEventListener('DOMContentLoaded', function() {
+			// 延迟执行，确保页面完全加载
+			setTimeout(() => {
+				autoUpdateServerValues();
+			}, 1000);
+		});
+		
+		// 每小时自动更新一次（汇率可能会变化）
+		setInterval(autoUpdateServerValues, 60 * 60 * 1000);
 	</script>
 </body>
 </html>

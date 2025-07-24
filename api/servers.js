@@ -464,12 +464,221 @@ app.use((error, req, res, next) => {
   });
 });
 
+// 定时任务：自动更新服务器剩余价值和溢价信息
+const updateServerValuesJob = async () => {
+  console.log('🔄 开始定时更新服务器剩余价值和溢价信息（使用最新汇率）...');
+  
+  try {
+    const serverQueries = getServerQueries();
+    const servers = serverQueries.getAllServers.all();
+    let updatedCount = 0;
+    let skippedSoldCount = 0;
+    
+    for (const server of servers) {
+      try {
+        // 跳过已售服务器 - 已售服务器的数据应该保持在售出时刻的状态
+        if (server.status === '已售') {
+          skippedSoldCount++;
+          console.log(`⏭️ 跳过已售服务器 ${server.merchant}（数据保持在售出时刻）`);
+          continue;
+        }
+        
+        // 跳过没有续费价格的服务器
+        if (!server.renewal_price) {
+          continue;
+        }
+        
+        // 解析续费价格和货币
+        const renewalPriceStr = server.renewal_price;
+        const renewalCurrency = detectCurrencyFromPrice(renewalPriceStr);
+        const renewalAmount = parseFloat(renewalPriceStr.replace(/[^0-9.]/g, ''));
+        
+        if (!renewalAmount || renewalAmount <= 0) {
+          continue;
+        }
+        
+        let newRemainingValue = '';
+        let remainingValueCNY = 0;
+        
+        if (server.renewal_cycle === '永久') {
+          // 永久服务器：剩余价值 = 续费价格
+          remainingValueCNY = await convertCurrencyServer(renewalAmount, renewalCurrency, 'CNY');
+          newRemainingValue = `${renewalAmount} ${renewalCurrency}`;
+        } else if (server.expiration_date) {
+          // 有期限的服务器：计算剩余价值（只对非已售服务器）
+          const purchaseDate = calculatePurchaseDateServer(server.expiration_date, server.renewal_cycle);
+          
+          if (purchaseDate) {
+            // 对于非已售服务器，使用当前日期计算
+            let calculationDate = new Date();
+            calculationDate.setHours(0, 0, 0, 0);
+            
+            const remainingRatio = calculateRemainingRatioServer(purchaseDate, new Date(server.expiration_date), calculationDate);
+            const remainingValueOriginal = renewalAmount * remainingRatio;
+            remainingValueCNY = await convertCurrencyServer(remainingValueOriginal, renewalCurrency, 'CNY');
+            
+            newRemainingValue = `${remainingValueOriginal.toFixed(2)} ${renewalCurrency}`;
+          }
+        }
+        
+        // 计算新的溢价信息
+        let newPremiumValue = server.premium_value; // 默认保持原值
+        
+        if (server.sale_price && server.sale_price !== '-' && remainingValueCNY > 0) {
+          try {
+            const salePriceStr = server.sale_price;
+            const saleCurrency = detectCurrencyFromPrice(salePriceStr);
+            const saleAmount = parseFloat(salePriceStr.replace(/[^0-9.]/g, ''));
+            
+            if (saleAmount > 0) {
+              const salePriceCNY = await convertCurrencyServer(saleAmount, saleCurrency, 'CNY');
+              const premium = salePriceCNY - remainingValueCNY;
+              newPremiumValue = `¥${premium.toFixed(2)}`;
+            }
+          } catch (error) {
+            console.warn(`计算服务器 ${server.merchant} 溢价信息失败:`, error.message);
+          }
+        }
+        
+        // 更新数据库（包括剩余价值和溢价信息）
+        if (newRemainingValue && (newRemainingValue !== server.remaining_value || newPremiumValue !== server.premium_value)) {
+          serverQueries.updateServer.run(
+            server.merchant,
+            server.country_code,
+            server.server_type,
+            server.sort_order,
+            server.cpu,
+            server.memory,
+            server.storage,
+            server.traffic,
+            server.sale_price,
+            server.renewal_price,
+            server.renewal_cycle,
+            newRemainingValue, // 更新剩余价值
+            newPremiumValue,   // 更新溢价信息
+            server.expiration_date,
+            server.status,
+            server.telegram_link,
+            server.nodeseek_link,
+            server.tags,
+            server.related_links,
+            server.sold_exchange_rates,
+            server.id
+          );
+          
+          updatedCount++;
+          console.log(`✅ 更新服务器 ${server.merchant}:`);
+          console.log(`   剩余价值: ${server.remaining_value} -> ${newRemainingValue}`);
+          console.log(`   溢价信息: ${server.premium_value} -> ${newPremiumValue}`);
+        }
+        
+      } catch (error) {
+        console.warn(`更新服务器 ${server.merchant} 失败:`, error.message);
+      }
+    }
+    
+    if (updatedCount > 0 || skippedSoldCount > 0) {
+      console.log(`✅ 定时任务完成，已更新 ${updatedCount} 个服务器，跳过 ${skippedSoldCount} 个已售服务器`);
+    } else {
+      console.log('ℹ️ 定时任务完成，所有服务器的剩余价值和溢价信息都是最新的');
+    }
+    
+  } catch (error) {
+    console.error('❌ 定时更新任务失败:', error);
+  }
+};
+
+// 辅助函数：从价格字符串中提取货币类型
+function detectCurrencyFromPrice(priceStr) {
+  if (!priceStr || typeof priceStr !== 'string') return 'CNY';
+  
+  // 检查是否包含货币代码
+  const codeMatch = priceStr.match(/([A-Z]{3})/i);
+  if (codeMatch) {
+    return codeMatch[1].toUpperCase();
+  }
+  
+  // 检查货币符号
+  if (priceStr.includes('$')) return 'USD';
+  if (priceStr.includes('€')) return 'EUR';
+  if (priceStr.includes('£')) return 'GBP';
+  if (priceStr.includes('¥')) return 'CNY';
+  
+  return 'CNY'; // 默认
+}
+
+// 服务器端货币转换函数
+async function convertCurrencyServer(amount, fromCurrency, toCurrency) {
+  if (fromCurrency === toCurrency) return amount;
+  
+  try {
+    const apiUrl = `https://open.er-api.com/v6/latest/${fromCurrency}`;
+    const response = await fetch(apiUrl);
+    const data = await response.json();
+    
+    if (data.rates && data.rates[toCurrency]) {
+      return amount * data.rates[toCurrency];
+    }
+    
+    return amount; // 如果获取失败，返回原值
+  } catch (error) {
+    console.warn(`汇率转换失败 ${fromCurrency} -> ${toCurrency}:`, error.message);
+    return amount;
+  }
+}
+
+// 服务器端购买日期计算
+function calculatePurchaseDateServer(expirationDate, renewalCycle) {
+  if (!expirationDate || !renewalCycle || renewalCycle === '永久') {
+    return null;
+  }
+  
+  const cycleMap = {
+    '月付': 1, '季付': 3, '半年付': 6, '年付': 12,
+    '两年付': 24, '三年付': 36, '五年付': 60
+  };
+  
+  const months = cycleMap[renewalCycle] || 0;
+  if (months === 0) return null;
+  
+  const expDate = new Date(expirationDate);
+  const purchaseDate = new Date(expDate);
+  purchaseDate.setMonth(purchaseDate.getMonth() - months);
+  
+  return purchaseDate;
+}
+
+// 服务器端剩余比例计算
+function calculateRemainingRatioServer(purchaseDate, expirationDate, today = new Date()) {
+  if (!purchaseDate || !expirationDate) return 0;
+  
+  const totalTime = expirationDate.getTime() - purchaseDate.getTime();
+  const remainingTime = Math.max(0, expirationDate.getTime() - today.getTime());
+  
+  if (totalTime <= 0) return 0;
+  
+  const ratio = remainingTime / totalTime;
+  return Math.max(0, Math.min(1, ratio));
+}
+
+// 启动定时任务
+console.log('🕒 启动服务器剩余价值和溢价信息定时更新任务...');
+
+// 服务器启动后5分钟执行第一次更新
+setTimeout(updateServerValuesJob, 5 * 60 * 1000);
+
+// 每12小时执行一次更新（每天执行2次）
+setInterval(updateServerValuesJob, 12 * 60 * 60 * 1000);
+
+console.log('✅ 定时任务已设置：每12小时自动更新一次服务器剩余价值和溢价信息');
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 B-Market API服务器启动成功！`);
   console.log(`📡 服务地址: http://localhost:${PORT}`);
   console.log(`📡 外网地址: http://13.70.189.213:${PORT}`);
   console.log(`📊 API文档: http://localhost:${PORT}/api/servers`);
   console.log(`💾 数据库连接成功`);
+  console.log(`⏰ 定时任务：每12小时自动更新服务器剩余价值和溢价信息`);
 });
 
 module.exports = app; 

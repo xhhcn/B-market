@@ -10,8 +10,8 @@ services:
     environment:
       - NODE_ENV=production
     volumes:
-      # 可选：持久化数据库
-      - ./data:/app/api/data
+      # 持久化数据库文件到专门的数据目录
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8006/health"]
       interval: 30s

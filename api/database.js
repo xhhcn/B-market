@@ -1,8 +1,16 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// 数据库文件路径
-const dbPath = path.join(__dirname, '..', 'servers.db');
+// 数据库文件路径 - 确保数据目录存在
+const dataDir = path.join(__dirname, '..', 'data');
+const dbPath = path.join(dataDir, 'servers.db');
+
+// 确保数据目录存在
+const fs = require('fs');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log('✅ 数据目录已创建:', dataDir);
+}
 const db = new Database(dbPath);
 
 // 创建用户认证表

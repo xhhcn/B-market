@@ -209,24 +209,24 @@ export default function TransactionInfo({ server }) {
           <div style={currentStyles.transactionInfoGrid}>
             <div style={currentStyles.transactionInfoItem}>
               <span style={currentStyles.label}>续费价格</span>
-              <span style={currentStyles.price}>{server.renewalPrice}</span>
+              <span className="renewal-price" style={currentStyles.price}>{server.renewalPrice}</span>
             </div>
             
             <div style={currentStyles.transactionInfoItem}>
               <span style={currentStyles.label}>到期日期</span>
-              <span style={server.renewalCycle === '永久' ? currentStyles.permanent : currentStyles.span}>
+              <span className="expiration-date" style={server.renewalCycle === '永久' ? currentStyles.permanent : currentStyles.span}>
                 {server.renewalCycle === '永久' ? '永久有效' : (server.expirationDate || '未设置')}
               </span>
             </div>
             
             <div style={currentStyles.transactionInfoItem}>
               <span style={currentStyles.label}>剩余价值</span>
-              <span style={currentStyles.value}>{server.remainingValue}</span>
+              <span className="remaining-value" style={currentStyles.value}>{server.remainingValue}</span>
             </div>
             
             <div style={currentStyles.transactionInfoItem}>
               <span style={currentStyles.label}>溢价信息</span>
-              <span style={currentStyles.value}>{server.premiumValue}</span>
+              <span className="premium-value" style={currentStyles.value}>{server.premiumValue}</span>
             </div>
           </div>
         </div>
